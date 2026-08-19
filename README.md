@@ -15,8 +15,9 @@ Situs ini disiapkan untuk jalan sebagai unikernel di Datum Compute:
 - `project.yaml` — manifest project Datum (`personal-project-86e0525b`; project-nya sudah ada, jadi tidak perlu di-apply).
 - `deploy/datum/` — `Workload`, overlay digest pin, manifest ingress, dan skrip
   build/deploy/re-point/verify.
-- `.github/workflows/publish-image.yml` — opsional, manual-dispatch: build image
-  dan push ke ghcr.io. Tidak men-deploy; deploy tetap dari terminal.
+- `.github/workflows/publish-image.yml` — manual-dispatch, dua mode: `rootfs`
+  (Docker image biasa, tanpa secret) dan `unikernel` (butuh kredensial
+  index.unikraft.io). Tidak men-deploy; deploy tetap dari terminal.
 
 Tiga dokumen, dari yang paling detail:
 

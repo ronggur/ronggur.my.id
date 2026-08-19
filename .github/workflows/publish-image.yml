@@ -1,38 +1,100 @@
-# Bangun image unikernel dan push ke ghcr.io. Workflow ini TIDAK men-deploy
-# apa pun ke Datum — deploy dilakukan manual dari terminal, lihat
-# deploy-manual.md di root repo.
+# Bangun image dan push ke ghcr.io. Workflow ini TIDAK men-deploy apa pun ke
+# Datum — deploy tetap manual dari terminal, lihat deploy-manual.md.
 #
-# Sengaja hanya `workflow_dispatch`: tidak pernah jalan sendiri saat push.
-# Anggap ini cadangan kalau suatu saat build dari laptop merepotkan; jalur
-# normalnya tetap `kraft pkg --push` dari laptop.
+# Dua mode, dipilih saat menjalankan:
 #
-# Sebelum bisa dipakai, siapkan dua secret di repo settings:
-#   KRAFT_USER, KRAFT_TOKEN — kredensial index.unikraft.io. Runtime base-compat
-#     hanya bisa ditarik oleh akun yang punya akses (limits register L51);
-#     tanpa ini build berhenti di "could not find runtime".
-# Push ke ghcr.io memakai GITHUB_TOKEN bawaan, tidak perlu secret tambahan.
+#   rootfs (default)  Build ./Dockerfile.unikraft sebagai Docker image biasa
+#                     dan push ke ghcr.io. TIDAK butuh secret apa pun —
+#                     GITHUB_TOKEN bawaan sudah cukup berkat `packages: write`.
+#                     Hasilnya BUKAN unikernel: image ini tidak akan boot di
+#                     cell Datum. Gunanya membuktikan rantai registry —
+#                     push, visibility, dan pull anonim — selagi akses base
+#                     image Unikraft belum ada.
 #
-# Belum pernah dijalankan. Jalankan sekali secara manual sebelum dipercaya.
+#   unikernel         Build unikernel sungguhan dengan kraft. Butuh secret
+#                     KRAFT_USER dan KRAFT_TOKEN (kredensial index.unikraft.io);
+#                     runtime base-compat hanya bisa ditarik akun yang punya
+#                     akses (limits register L51). Tanpa itu langkahnya berhenti
+#                     di "could not find runtime".
+#
+# Sengaja hanya workflow_dispatch: tidak pernah jalan sendiri saat push.
 name: publish-image
 
 on:
   workflow_dispatch:
     inputs:
+      mode:
+        description: "Apa yang dibangun"
+        type: choice
+        default: rootfs
+        options:
+          - rootfs
+          - unikernel
       tag:
-        description: "Tag image (default: commit SHA)"
+        description: "Tag image (default: mode + commit SHA pendek)"
         required: false
         type: string
 
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/ronggur-my-id
+
 jobs:
-  publish:
+  rootfs:
+    if: inputs.mode == 'rootfs'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Login ke ghcr.io
+        run: echo '${{ secrets.GITHUB_TOKEN }}' | docker login ghcr.io -u '${{ github.actor }}' --password-stdin
+
+      - name: Build dan push
+        id: build
+        run: |
+          TAG="${{ inputs.tag }}"
+          [ -n "$TAG" ] || TAG="rootfs-${GITHUB_SHA::7}"
+          docker buildx build \
+            --platform linux/amd64 \
+            -f Dockerfile.unikraft \
+            --label org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }} \
+            --label org.opencontainers.image.revision=$GITHUB_SHA \
+            --label org.opencontainers.image.description="Rootfs image (plain Docker image, not a unikernel)" \
+            -t "$IMAGE:$TAG" \
+            --push .
+          echo "ref=$IMAGE:$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Laporkan digest
+        run: |
+          REF='${{ steps.build.outputs.ref }}'
+          DIGEST="$(docker buildx imagetools inspect "$REF" --format '{{.Manifest.Digest}}')"
+          {
+            echo "### Image ter-push"
+            echo ""
+            echo '```'
+            echo "$REF"
+            echo "$IMAGE@$DIGEST"
+            echo '```'
+            echo ""
+            echo "**Ini Docker image biasa, bukan unikernel** — tidak akan boot di cell Datum."
+            echo "Langkah berikutnya: pastikan package-nya publik, lalu buktikan bisa ditarik anonim:"
+            echo ""
+            echo '```sh'
+            echo "docker logout ghcr.io && crane manifest $IMAGE@$DIGEST"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  unikernel:
+    if: inputs.mode == 'unikernel'
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
     timeout-minutes: 30
-
-    env:
-      IMAGE: ghcr.io/${{ github.repository_owner }}/ronggur-my-id
 
     steps:
       - uses: actions/checkout@v4
@@ -45,22 +107,26 @@ jobs:
           KRAFT_USER: ${{ secrets.KRAFT_USER }}
           KRAFT_TOKEN: ${{ secrets.KRAFT_TOKEN }}
         run: |
+          [ -n "$KRAFT_TOKEN" ] || { echo "::error::secret KRAFT_TOKEN belum diisi — lihat komentar di atas file ini"; exit 1; }
           kraft login --user "$KRAFT_USER" --token "$KRAFT_TOKEN" index.unikraft.io
           echo '${{ secrets.GITHUB_TOKEN }}' | docker login ghcr.io -u '${{ github.actor }}' --password-stdin
           crane auth login ghcr.io -u '${{ github.actor }}' -p '${{ secrets.GITHUB_TOKEN }}'
 
-      - name: Build dan push
+      - name: Build dan push unikernel
+        id: build
         run: |
-          TAG="${{ inputs.tag || github.sha }}"
+          TAG="${{ inputs.tag }}"
+          [ -n "$TAG" ] || TAG="${GITHUB_SHA::7}"
           kraft pkg --name "$IMAGE:$TAG" --plat kraftcloud --arch x86_64 --push .
-          echo "IMAGE_REF=$IMAGE:$TAG" >> "$GITHUB_ENV"
+          echo "ref=$IMAGE:$TAG" >> "$GITHUB_OUTPUT"
 
       - name: Laporkan digest untuk di-pin manual
         run: |
-          DIGEST="$(crane digest "$IMAGE_REF")"
-          crane manifest "$IMAGE_REF" | jq -c '.manifests // [] | map(.platform)'
+          REF='${{ steps.build.outputs.ref }}'
+          DIGEST="$(crane digest "$REF")"
+          crane manifest "$REF" | jq -c '.manifests // [] | map(.platform)'
           {
-            echo "### Image siap di-deploy"
+            echo "### Unikernel siap di-deploy"
             echo ""
             echo '```'
             echo "$IMAGE@$DIGEST"

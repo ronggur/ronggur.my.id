@@ -59,7 +59,7 @@ deploy/datum/
   overlays/production/                 digest pin
   ingress/{gateway,endpointslice,httproute}.yaml
   scripts/{build-push,deploy,repoint-ingress,verify,serve-local,common}.sh
-.github/workflows/publish-image.yml    opsional, manual-dispatch: build + push image saja
+.github/workflows/publish-image.yml    manual-dispatch, dua mode: rootfs (tanpa secret) / unikernel
 ```
 
 Yang **tidak** disentuh: `index.html`, `flappy.html`, `flappy-bird-assets/`,
