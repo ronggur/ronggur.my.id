@@ -1,0 +1,354 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Flappy Bird — ronggur.my.id</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    height: 100%;
+    display: grid;
+    place-items: center;
+    background: #1d2b3a;
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    overflow: hidden;
+    touch-action: none;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  canvas {
+    display: block;
+    height: min(94vh, 768px);
+    width: auto;
+    aspect-ratio: 288 / 512;
+    border-radius: 8px;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, .45);
+    cursor: pointer;
+    touch-action: none;
+    image-rendering: pixelated;
+  }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<script>
+(() => {
+  'use strict';
+
+  const ASSETS = 'flappy-bird-assets/';
+
+  const cvs = document.getElementById('game');
+  const ctx = cvs.getContext('2d');
+
+  // ukuran kanonik sprite: background 288x512, base 336x112 -> lantai di y=400
+  const W = 288, H = 512;
+  const BASE_W = 336, BASE_H = 112;
+  const FLOOR = H - BASE_H;
+
+  const dpr = Math.min(window.devicePixelRatio || 1, 3);
+  cvs.width = W * dpr;
+  cvs.height = H * dpr;
+  ctx.scale(dpr, dpr);
+  ctx.imageSmoothingEnabled = false;   // jaga tampilan pixel-art
+
+  // --- tuning: sama seperti versi canvas, sengaja gampang ---
+  const GRAVITY      = 0.4;
+  const FLAP         = -7;
+  const PIPE_W       = 52;   // == lebar pipe-green.png
+  const PIPE_H       = 320;  // == tinggi pipe-green.png
+  const PIPE_GAP     = 140;
+  const PIPE_SPACING = 220;
+  const SPEED        = 2;
+
+  // sprite burung 34x24, hitbox-nya dibikin lebih kecil supaya adil
+  const BIRD_W = 34, BIRD_H = 24;
+  const HIT_X  = 5,  HIT_Y  = 4;
+  const HIT_W  = BIRD_W - HIT_X * 2;
+  const HIT_H  = BIRD_H - HIT_Y * 2;
+
+  const READY = 0, PLAY = 1, OVER = 2;
+
+  const IMG = {};
+  const MANIFEST = {
+    bg:       'sprites/background-day.png',
+    base:     'sprites/base.png',
+    pipe:     'sprites/pipe-green.png',
+    birdDown: 'sprites/yellowbird-downflap.png',
+    birdMid:  'sprites/yellowbird-midflap.png',
+    birdUp:   'sprites/yellowbird-upflap.png',
+    message:  'sprites/message.png',
+    gameover: 'sprites/gameover.png',
+  };
+  for (let i = 0; i <= 9; i++) MANIFEST['d' + i] = 'sprites/' + i + '.png';
+
+  let ready = false, loadError = null;
+
+  let state, bird, pipes, score, frame, groundX, overCooldown, dieSndIn, birdFrame;
+  let best = Number(localStorage.getItem('flappyBest')) || 0;
+  let muted = localStorage.getItem('flappyMute') === '1';
+
+  // ---------- audio ----------
+  const SND = {};
+  const probe = document.createElement('audio');
+  const ext = probe.canPlayType && probe.canPlayType('audio/ogg; codecs="vorbis"') ? '.ogg' : '.wav';
+  for (const name of ['wing', 'point', 'hit', 'die', 'swoosh']) {
+    const a = new Audio(ASSETS + 'audio/' + name + ext);
+    a.volume = 0.4;
+    a.preload = 'auto';
+    SND[name] = a;
+  }
+  function play(name) {
+    if (muted) return;
+    const a = SND[name];
+    if (!a) return;
+    try { a.currentTime = 0; const p = a.play(); if (p && p.catch) p.catch(() => {}); } catch (e) {}
+  }
+
+  // ---------- state ----------
+  function makePipe(x) {
+    const margin = 50;
+    // top maksimum 210, jadi pipa 320px selalu menutupi penuh atas & bawah
+    const top = margin + Math.random() * (FLOOR - PIPE_GAP - margin * 2);
+    return { x, top, scored: false };
+  }
+
+  function reset() {
+    state = READY;
+    bird = { x: 60, y: H / 2 - 80, vy: 0, rot: 0 };
+    pipes = [];
+    for (let i = 0; i < 3; i++) pipes.push(makePipe(W + 60 + i * PIPE_SPACING));
+    score = 0;
+    frame = 0;
+    groundX = 0;
+    overCooldown = 0;
+    dieSndIn = 0;
+    birdFrame = 0;
+  }
+
+  function die() {
+    state = OVER;
+    overCooldown = 25;
+    dieSndIn = 12;
+    play('hit');
+    if (score > best) {
+      best = score;
+      try { localStorage.setItem('flappyBest', String(best)); } catch (e) {}
+    }
+  }
+
+  function flap() {
+    if (!ready) return;
+    if (state === READY) {
+      state = PLAY;
+      bird.vy = FLAP;
+      play('swoosh');
+      play('wing');
+    } else if (state === PLAY) {
+      bird.vy = FLAP;
+      play('wing');
+    } else if (overCooldown <= 0) {
+      reset();
+      play('swoosh');
+    }
+  }
+
+  // ---------- update ----------
+  function update() {
+    if (!ready) return;
+    frame++;
+    if (state !== OVER) {
+      groundX = (groundX - SPEED) % BASE_W;
+      birdFrame = Math.floor(frame / 6) % 4;
+    }
+
+    if (state === READY) {
+      bird.y = H / 2 - 80 + Math.sin(frame / 12) * 6;
+      return;
+    }
+
+    if (state === OVER) {
+      if (overCooldown > 0) overCooldown--;
+      if (dieSndIn > 0 && --dieSndIn === 0) play('die');
+      if (bird.y + BIRD_H < FLOOR) {
+        bird.vy += GRAVITY;
+        bird.y += bird.vy;
+        bird.rot = Math.min(bird.rot + 0.1, Math.PI / 2);
+      } else {
+        bird.y = FLOOR - BIRD_H;
+        bird.rot = Math.PI / 2;
+      }
+      return;
+    }
+
+    // PLAY
+    bird.vy += GRAVITY;
+    bird.y += bird.vy;
+    bird.rot = Math.max(-0.4, Math.min(Math.PI / 2, bird.vy * 0.08));
+
+    for (const p of pipes) {
+      p.x -= SPEED;
+      if (!p.scored && p.x + PIPE_W < bird.x + HIT_X) {
+        p.scored = true;
+        score++;
+        play('point');
+      }
+    }
+
+    if (pipes[0].x + PIPE_W < -10) {
+      pipes.shift();
+      pipes.push(makePipe(pipes[pipes.length - 1].x + PIPE_SPACING));
+    }
+
+    // plafon ditahan, bukan mati
+    if (bird.y < 0) { bird.y = 0; bird.vy = 0; }
+
+    if (bird.y + BIRD_H >= FLOOR) {
+      bird.y = FLOOR - BIRD_H;
+      die();
+      return;
+    }
+
+    const bx = bird.x + HIT_X, by = bird.y + HIT_Y;
+    for (const p of pipes) {
+      const overlapX = bx + HIT_W > p.x && bx < p.x + PIPE_W;
+      const missGap  = by < p.top || by + HIT_H > p.top + PIPE_GAP;
+      if (overlapX && missGap) { die(); return; }
+    }
+  }
+
+  // ---------- draw ----------
+  function label(str, x, y, size, align) {
+    ctx.font = '700 ' + size + 'px system-ui, -apple-system, sans-serif';
+    ctx.textAlign = align || 'center';
+    ctx.textBaseline = 'middle';
+    ctx.lineJoin = 'round';   // tanpa ini sudut lancip (M, y) jadi paku miter
+    ctx.miterLimit = 2;
+    ctx.lineWidth = Math.max(2, size / 6);
+    ctx.strokeStyle = 'rgba(0,0,0,.5)';
+    ctx.strokeText(str, x, y);
+    ctx.fillStyle = '#fff';
+    ctx.fillText(str, x, y);
+  }
+
+  function drawNumber(n, cy, scale) {
+    const digits = String(n).split('').map((c) => IMG['d' + c]);
+    let total = 0;
+    for (const d of digits) total += d.width * scale;
+    let x = (W - total) / 2;
+    for (const d of digits) {
+      const w = d.width * scale, h = d.height * scale;
+      ctx.drawImage(d, x, cy - h / 2, w, h);
+      x += w;
+    }
+  }
+
+  function drawCentered(img, y, scale) {
+    const s = scale || 1;
+    ctx.drawImage(img, (W - img.width * s) / 2, y, img.width * s, img.height * s);
+  }
+
+  function drawPipe(p) {
+    // pipa atas: sprite yang sama, di-flip vertikal, tepi bawahnya di batas celah
+    ctx.save();
+    ctx.translate(p.x, p.top);
+    ctx.scale(1, -1);
+    ctx.drawImage(IMG.pipe, 0, 0);
+    ctx.restore();
+    ctx.drawImage(IMG.pipe, p.x, p.top + PIPE_GAP);
+  }
+
+  function drawBird() {
+    const order = [IMG.birdDown, IMG.birdMid, IMG.birdUp, IMG.birdMid];
+    const img = state === OVER ? IMG.birdMid : order[birdFrame];
+    ctx.save();
+    ctx.translate(bird.x + BIRD_W / 2, bird.y + BIRD_H / 2);
+    ctx.rotate(bird.rot);
+    ctx.drawImage(img, -BIRD_W / 2, -BIRD_H / 2);
+    ctx.restore();
+  }
+
+  function draw() {
+    if (loadError) {
+      ctx.fillStyle = '#1d2b3a';
+      ctx.fillRect(0, 0, W, H);
+      label('Gagal memuat asset', W / 2, H / 2 - 30, 15);
+      label(loadError, W / 2, H / 2, 11);
+      label('Pastikan folder flappy-bird-assets/', W / 2, H / 2 + 26, 11);
+      label('ada di samping file ini.', W / 2, H / 2 + 42, 11);
+      return;
+    }
+    if (!ready) {
+      ctx.fillStyle = '#4ec0ca';
+      ctx.fillRect(0, 0, W, H);
+      label('Loading…', W / 2, H / 2, 16);
+      return;
+    }
+
+    ctx.drawImage(IMG.bg, 0, 0);
+    for (const p of pipes) drawPipe(p);
+    ctx.drawImage(IMG.base, groundX, FLOOR);
+    ctx.drawImage(IMG.base, groundX + BASE_W, FLOOR);
+
+    // message.png sudah memuat gambar burung sendiri -> jangan gambar burung dobel
+    if (state !== READY) drawBird();
+
+    if (state === READY) {
+      drawCentered(IMG.message, 60);
+      if (best > 0) label('Best: ' + best, W / 2, 372, 13);
+      label(muted ? 'M = suara: mati' : 'M = suara: nyala', W / 2, FLOOR + 62, 10);
+    } else if (state === PLAY) {
+      drawNumber(score, 50, 1);   // di OVER skornya sudah tampil di panel
+    }
+
+    if (state === OVER) {
+      ctx.fillStyle = 'rgba(0,0,0,.28)';
+      ctx.fillRect(0, 0, W, H);
+      drawCentered(IMG.gameover, 120);
+      drawNumber(score, 205, 1);
+      label('BEST', W / 2, 250, 12);
+      drawNumber(best, 278, 0.65);
+      if (overCooldown <= 0 && Math.floor(frame / 24) % 2 === 0) {
+        label('Tap untuk main lagi', W / 2, 330, 14);
+      }
+    }
+  }
+
+  function loop() {
+    update();
+    draw();
+    requestAnimationFrame(loop);
+  }
+
+  // ---------- input ----------
+  cvs.addEventListener('pointerdown', (e) => { e.preventDefault(); flap(); });
+  window.addEventListener('keydown', (e) => {
+    if (e.code === 'Space' || e.code === 'ArrowUp' || e.key === ' ') {
+      e.preventDefault();
+      flap();
+    } else if (e.code === 'KeyM') {
+      muted = !muted;
+      try { localStorage.setItem('flappyMute', muted ? '1' : '0'); } catch (err) {}
+    }
+  });
+
+  // ---------- preload ----------
+  function loadImage(key, file) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => { IMG[key] = img; resolve(); };
+      img.onerror = () => reject(new Error(file));
+      img.src = ASSETS + file;
+    });
+  }
+
+  reset();
+  loop();
+
+  Promise.all(Object.keys(MANIFEST).map((k) => loadImage(k, MANIFEST[k])))
+    .then(() => { ready = true; })
+    .catch((err) => { loadError = err.message; });
+})();
+</script>
+</body>
+</html>
