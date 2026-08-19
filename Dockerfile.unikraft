@@ -1,0 +1,44 @@
+# Root filesystem for the Datum Compute unikernel (see ./Kraftfile).
+# Build normally, then copy the minimum viable filesystem into FROM scratch.
+#
+# By hand (kraft drives BuildKit itself, so this is only for checking the
+# rootfs — pass --platform or the image config claims the build host's arch):
+#   docker build --platform linux/amd64 -f Dockerfile.unikraft -t rootfs:test .
+#   docker run --rm --platform linux/amd64 -p 8080:8080 rootfs:test
+#
+# The platform pin keeps the rootfs x86_64 even on an arm64 build host:
+# base-compat is x86_64, so every binary in the rootfs must be too.
+FROM --platform=linux/amd64 golang:1.23-alpine AS build
+
+WORKDIR /src
+COPY deploy/datum/server/go.mod ./
+COPY deploy/datum/server/main.go ./
+
+# CGO_ENABLED=0 makes the binary static: the final stage has no loader and no
+# shared libraries, and a missing .so would kill the unikernel seconds after
+# boot with no error to read (there are no logs — register row L6).
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+      go build -trimpath -ldflags="-s -w" -o /out/server .
+
+# Guard the classic failure at build time instead of at boot.
+RUN if ldd /out/server >/dev/null 2>&1; then \
+      echo "ERROR: /out/server is dynamically linked"; exit 1; \
+    fi
+
+# The platform pin belongs on this stage too: without it the image config
+# would claim the build host's architecture while carrying x86_64 binaries.
+FROM --platform=linux/amd64 scratch
+
+COPY --from=build /out/server /server
+COPY --from=build /etc/os-release /etc/os-release
+
+# The site itself. index.html is the served page; flappy.html stays out of the
+# image on purpose — it is the dependency-free canvas version kept for local use.
+COPY index.html /site/index.html
+COPY flappy-bird-assets/ /site/flappy-bird-assets/
+
+# Kraftlet starts the process named by `cmd:` in the Kraftfile, not by this
+# image's config — these two lines exist purely so `docker run` (and Docker
+# Desktop's Run button) can start the same rootfs locally without arguments.
+EXPOSE 8080
+CMD ["/server"]

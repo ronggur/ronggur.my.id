@@ -1,0 +1,16 @@
+# Unikernel build for Datum Compute. Cells boot unikernels under kraftlet,
+# so the nginx image in ./Dockerfile does not boot there (limits register L10).
+# Build with: deploy/datum/scripts/build-push.sh
+spec: v0.7
+
+name: ronggur-my-id
+
+# Prebuilt Unikraft runtime with Linux binary compatibility for ordinary
+# x86_64 executables. Base-image access is gated — see register row L51.
+runtime: base-compat:latest
+
+rootfs:
+  source: ./Dockerfile.unikraft
+
+# The one process the unikernel starts. Statically linked, no shell needed.
+cmd: ["/server"]

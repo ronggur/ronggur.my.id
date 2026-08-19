@@ -1,0 +1,14 @@
+# Datum project for ronggur.my.id.
+#   datumctl apply -f project.yaml --organization personal-org-86e0525b
+# Sudah ada per 2026-08-19 (`datumctl ctx list`), jadi file ini terutama
+# catatan sumber-kebenaran kalau project perlu dibuat ulang.
+apiVersion: resourcemanager.miloapis.com/v1alpha1
+kind: Project
+metadata:
+  annotations:
+    kubernetes.io/description: ronggur.my.id
+  name: personal-project-86e0525b
+spec:
+  ownerRef:
+    kind: Organization
+    name: personal-org-86e0525b

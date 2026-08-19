@@ -1,0 +1,71 @@
+# Bangun image unikernel dan push ke ghcr.io. Workflow ini TIDAK men-deploy
+# apa pun ke Datum — deploy dilakukan manual dari terminal, lihat
+# deploy-manual.md di root repo.
+#
+# Sengaja hanya `workflow_dispatch`: tidak pernah jalan sendiri saat push.
+# Anggap ini cadangan kalau suatu saat build dari laptop merepotkan; jalur
+# normalnya tetap `kraft pkg --push` dari laptop.
+#
+# Sebelum bisa dipakai, siapkan dua secret di repo settings:
+#   KRAFT_USER, KRAFT_TOKEN — kredensial index.unikraft.io. Runtime base-compat
+#     hanya bisa ditarik oleh akun yang punya akses (limits register L51);
+#     tanpa ini build berhenti di "could not find runtime".
+# Push ke ghcr.io memakai GITHUB_TOKEN bawaan, tidak perlu secret tambahan.
+#
+# Belum pernah dijalankan. Jalankan sekali secara manual sebelum dipercaya.
+name: publish-image
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag image (default: commit SHA)"
+        required: false
+        type: string
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    timeout-minutes: 30
+
+    env:
+      IMAGE: ghcr.io/${{ github.repository_owner }}/ronggur-my-id
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Pasang toolchain
+        run: brew install kraftkit crane
+
+      - name: Login ke registry
+        env:
+          KRAFT_USER: ${{ secrets.KRAFT_USER }}
+          KRAFT_TOKEN: ${{ secrets.KRAFT_TOKEN }}
+        run: |
+          kraft login --user "$KRAFT_USER" --token "$KRAFT_TOKEN" index.unikraft.io
+          echo '${{ secrets.GITHUB_TOKEN }}' | docker login ghcr.io -u '${{ github.actor }}' --password-stdin
+          crane auth login ghcr.io -u '${{ github.actor }}' -p '${{ secrets.GITHUB_TOKEN }}'
+
+      - name: Build dan push
+        run: |
+          TAG="${{ inputs.tag || github.sha }}"
+          kraft pkg --name "$IMAGE:$TAG" --plat kraftcloud --arch x86_64 --push .
+          echo "IMAGE_REF=$IMAGE:$TAG" >> "$GITHUB_ENV"
+
+      - name: Laporkan digest untuk di-pin manual
+        run: |
+          DIGEST="$(crane digest "$IMAGE_REF")"
+          crane manifest "$IMAGE_REF" | jq -c '.manifests // [] | map(.platform)'
+          {
+            echo "### Image siap di-deploy"
+            echo ""
+            echo '```'
+            echo "$IMAGE@$DIGEST"
+            echo '```'
+            echo ""
+            echo "Pin baris \`image:\` di workload.yaml ke referensi di atas, lalu jalankan"
+            echo "\`datumctl compute deploy -f workload.yaml\` dari terminal."
+          } >> "$GITHUB_STEP_SUMMARY"

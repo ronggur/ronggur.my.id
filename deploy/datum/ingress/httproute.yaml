@@ -1,0 +1,17 @@
+# Connects the Gateway to the EndpointSlice. Hostnames stay off the route —
+# the webhook rejects spec.hostnames outright (register row L19); hostnames
+# belong on Gateway listeners, and the route inherits them.
+# The backend port must match a named port in the slice.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: ronggur-my-id-route
+spec:
+  parentRefs:
+    - name: ronggur-my-id-gw
+  rules:
+    - backendRefs:
+        - group: discovery.k8s.io
+          kind: EndpointSlice
+          name: ronggur-my-id-endpoints
+          port: 8080

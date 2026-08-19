@@ -1,0 +1,14 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+
+# CI rewrites this block on every release:
+#   kustomize edit set image \
+#     "ghcr.io/ronggur/ronggur-my-id=ghcr.io/ronggur/ronggur-my-id@sha256:<digest>"
+# A plain images: block reaches the Workload's image path with no
+# configurations: fieldspec (verified with kustomize v5.8.1, register row L13).
+images:
+  - name: ghcr.io/ronggur/ronggur-my-id
+    newTag: latest

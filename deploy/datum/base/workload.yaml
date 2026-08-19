@@ -1,0 +1,47 @@
+apiVersion: compute.datumapis.com/v1alpha
+kind: Workload
+metadata:
+  name: ronggur-my-id
+spec:
+  template:
+    spec:
+      runtime:
+        resources:
+          # The only valid instance type: 1 vCPU, 2 GiB (register row L1).
+          # Per-container `resources` is rejected at admission.
+          instanceType: datumcloud/d1-standard-2
+        sandbox:
+          containers:
+            - name: web
+              # Overwritten with an immutable digest by the production overlay.
+              # Re-pushing a mutable tag rolls nothing (register row L52).
+              image: ghcr.io/ronggur/ronggur-my-id:latest
+              env:
+                - name: PORT
+                  value: "8080"
+                - name: SITE_ROOT
+                  value: /site
+              ports:
+                - name: http
+                  port: 8080
+                  protocol: TCP
+      networkInterfaces:
+        - network:
+            name: default
+          networkPolicy:
+            ingress:
+              - ports:
+                  - port: 8080
+                from:
+                  - ipBlock:
+                      cidr: 0.0.0.0/0
+  placements:
+    - name: us
+      cityCodes:
+        # Must be a code from `datumctl get locationbindings -o wide`.
+        - DFW
+      scaleSettings:
+        # 1 replica means every rollout replaces the only instance and the
+        # site is down for that window (register rows L21, L43). Raise to 2
+        # before this carries traffic that matters.
+        minReplicas: 1
