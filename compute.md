@@ -81,6 +81,7 @@ persis seperti sebelumnya.
 | `verify.sh` saat instance tidak menjawab | Gagal keras, exit 1 |
 | Render `overlays/production` (kustomize v5.6.0 bawaan kubectl) | Satu dokumen; blok `images:` dengan digest benar-benar menulis ulang `spec.template.spec.runtime.sandbox.containers[].image` — mengonfirmasi L13 |
 | Semua YAML + semua skrip | Parse bersih (`YAML.load_file`, `bash -n`) |
+| **Rantai registry ghcr.io, end to end** | Workflow mode `rootfs` build + push tanpa secret apa pun (pakai `GITHUB_TOKEN`); hasilnya `ghcr.io/ronggur/ronggur-my-id@sha256:abd98747…` bisa ditarik **anonim**: token endpoint memberi token, manifest 200, tags list 200, config blob 200 — `amd64/linux`, `cmd ["/server"]`, `8080/tcp`, label source menunjuk repo. 4 lapis, 2,7 MiB (2026-08-19) |
 
 Dua perbaikan lahir dari test:
 
@@ -112,8 +113,9 @@ runtime pembungkusnya.
 
 ### Belum diuji sama sekali
 
-Deploy ke Datum, jembatan ingress (Gateway → EndpointSlice → HTTPRoute), dan
-workflow `publish-image.yml`. Semua menunggu image ada lebih dulu.
+Deploy ke Datum dan jembatan ingress (Gateway → EndpointSlice → HTTPRoute).
+Mode `unikernel` di `publish-image.yml` juga belum pernah jalan — ia menunggu
+kredensial `index.unikraft.io`.
 
 ## 5. Keadaan akun (read-only, 2026-08-19)
 

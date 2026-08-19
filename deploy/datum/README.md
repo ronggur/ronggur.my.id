@@ -182,6 +182,7 @@ platform, belum pernah diamati jalan:
 
 | Status | Hal | Catatan |
 |---|---|---|
+| ✅ Terbukti | Registry ghcr.io: push dari CI tanpa secret, package publik, bisa ditarik anonim | `ghcr.io/ronggur/ronggur-my-id@sha256:abd98747…` — manifest, tags, dan config blob semua 200 tanpa kredensial (2026-08-19) |
 | ✅ Terbukti | Rootfs `Dockerfile.unikraft` terbentuk dan melayani | `docker build --platform linux/amd64` + `docker run` → `/`, sprite, wav, favicon, `/healthz` semua 200 (2026-08-19) |
 | ⛔ **Blocked sekarang** | `kraft pkg` tidak bisa mengambil runtime `base-compat` | `could not find runtime 'index.unikraft.io/official/base-compat:latest' (kraftcloud/x86_64)`. Anonim ditolak; butuh `kraft login` dengan akun yang punya akses base enterprise (L51). Ini penghalang nyata sebelum deploy apa pun |
 | ❓ Belum terbukti | Flag `kraft pkg` dan relabel `kraftcloud/x86_64` | `--plat kraftcloud --arch x86_64` valid menurut `kraft pkg --help` v0.12.15, tapi belum pernah menghasilkan package |
