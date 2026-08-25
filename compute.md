@@ -117,6 +117,36 @@ Deploy ke Datum dan jembatan ingress (Gateway → EndpointSlice → HTTPRoute).
 Mode `unikernel` di `publish-image.yml` juga belum pernah jalan — ia menunggu
 kredensial `index.unikraft.io`.
 
+## 4b. Temuan besar (2026-08-25): staging IPv6-only, bukan bug kita
+
+Scan langsung ke source `compute` dan `infra` (`/Users/ronggur/Works/Datum/www/`)
+menemukan penyebab sesungguhnya `EXTERNAL IP` kita selalu kosong:
+
+- `networkInterfaces[].ipFamilies` default ke `[IPv6]` kalau tidak diisi
+  (`compute/api/v1alpha/instance_types.go`, sudah masuk ke CRD yang terpasang)
+  — dan **semua** sample resmi di repo `compute` (termasuk yang kita ikuti)
+  juga tidak mengisinya.
+- `externalIP` butuh request class `public-ipv4` lewat `addresses[]`, tapi
+  staging **tidak punya IPClass IPv4 sama sekali** — dikonfirmasi tertulis
+  eksplisit di `infra/apps/network-services-operator/platform-project/classes.yaml`:
+  *"IPv6 is the only address family the platform hands out. There is
+  deliberately no IPv4 class here."*
+- Bonus bug: `networkPolicy.ingress[].from[].ipBlock.cidr: 0.0.0.0/0` yang
+  kita (dan semua sample resmi) pakai **tidak mencocokkan trafik apa pun**
+  di interface IPv6-only. Sudah diperbaiki di `base/workload.yaml` — ditambah
+  `ipBlock: cidr: "::/0"`.
+
+**Dikonfirmasi independen oleh tim Datum sendiri** (Scot Schuchert-Wells, Slack,
+2026-08-25 03:31): workload uji coba `ipv6-hello` di staging DFW mencapai
+`STATUS: Available` dengan hanya alamat internal (`fd20::1:0:0/96`), tanpa
+external IP — persis pola yang kita temukan dari source code.
+
+**Implikasi:** kriteria sukses deploy kita bukan lagi "dapat EXTERNAL IP" (itu
+tidak akan pernah terjadi di staging), tapi **"STATUS jadi Available"**.
+Koreksi sudah ditambahkan ke `compute-handbook` sebagai row **L57** baru di
+`reference.md` (section Networking & ingress) dan catatan di `getting-started.md`
+sebelum section "Expose it on your domain".
+
 ## 5. Keadaan akun
 
 > **Update 2026-08-25:** test aktif sekarang jalan di project baru

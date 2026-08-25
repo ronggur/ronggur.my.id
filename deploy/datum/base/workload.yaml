@@ -26,6 +26,13 @@ spec:
                   port: 8080
                   protocol: TCP
       networkInterfaces:
+        # ipFamilies omitted -> the platform defaults it to [IPv6] (see the
+        # CRD's ipFamilies default). Staging has no IPv4 IPClass at all yet —
+        # confirmed in infra/apps/network-services-operator/platform-project/
+        # classes.yaml: "IPv6 is the only address family the platform hands
+        # out. There is deliberately no IPv4 class here." So the instance
+        # gets no EXTERNAL IP and no private IPv4 either, no matter what this
+        # manifest asks for — that's a platform gap, not a config one.
         - network:
             name: default
           networkPolicy:
@@ -33,6 +40,15 @@ spec:
               - ports:
                   - port: 8080
                 from:
+                  # ::/0, not 0.0.0.0/0: the compute repo's own samples
+                  # (workload-sandbox, workload-vm, multi-placement, kong-
+                  # gateway) all still write the IPv4 form, which matches no
+                  # traffic on an IPv6-only interface (IPBlock.CIDR accepts
+                  # either family — see network-services-operator's
+                  # networkpolicy_types.go). Keeping the IPv4 line too costs
+                  # nothing and covers the day IPv4 ships.
+                  - ipBlock:
+                      cidr: "::/0"
                   - ipBlock:
                       cidr: 0.0.0.0/0
   placements:
