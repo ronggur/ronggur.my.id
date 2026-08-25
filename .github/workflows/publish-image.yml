@@ -126,6 +126,7 @@ jobs:
       - name: Pasang unikraft CLI
         run: |
           brew tap unikraft/cli
+          brew trust --formula unikraft/cli/unikraft
           brew install unikraft
 
       - name: Siapkan endpoint BuildKit
