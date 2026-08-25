@@ -117,7 +117,17 @@ Deploy ke Datum dan jembatan ingress (Gateway → EndpointSlice → HTTPRoute).
 Mode `unikernel` di `publish-image.yml` juga belum pernah jalan — ia menunggu
 kredensial `index.unikraft.io`.
 
-## 5. Keadaan akun (read-only, 2026-08-19)
+## 5. Keadaan akun
+
+> **Update 2026-08-25:** test aktif sekarang jalan di project baru
+> **`website-w7zf79`**, di environment **staging** `cloud.datum.net` (dibuat
+> user, bukan `personal-project-86e0525b` yang dicek di bawah). Admission
+> mengonfirmasi kota yang didukung project ini adalah **`DFW`** saja —
+> `workload.yaml` sudah disesuaikan. Belum dicek: nama organisasi, quota,
+> dan apakah entitlement compute-nya sudah Active (deploy pertama sempat
+> membuat `Network default` otomatis, jadi setidaknya lolos admission).
+
+### Keadaan akun sebelumnya (read-only, 2026-08-19)
 
 - `datumctl` login sebagai `rhabibun@datum.net`, plugin compute terpasang.
 - Organisasi `personal-org-86e0525b`.

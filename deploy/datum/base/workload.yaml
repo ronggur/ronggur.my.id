@@ -38,7 +38,10 @@ spec:
   placements:
     - name: us
       cityCodes:
-        # Must be a code from `datumctl get locationbindings -o wide`.
+        # Must be a code from `datumctl get locationbindings -o wide` for
+        # whichever project is actually active — confirmed by admission
+        # itself on 2026-08-25 against project website-w7zf79 (a different
+        # project than personal-project-86e0525b, checked 2026-08-19).
         - DFW
       scaleSettings:
         # 1 replica means every rollout replaces the only instance and the

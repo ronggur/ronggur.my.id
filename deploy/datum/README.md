@@ -32,7 +32,16 @@ Halaman ini memakai skrip. Kalau kamu ingin mengetik sendiri tiap perintah
 Yang di root repo: `Kraftfile`, `Dockerfile.unikraft`, `project.yaml`, dan
 `.github/workflows/publish-image.yml` (opsional, build+push saja).
 
-## Status akun (dicek 2026-08-19, read-only)
+## Status akun
+
+> **Update 2026-08-25:** test deploy sekarang jalan di **`website-w7zf79`**,
+> project baru di environment **staging** `cloud.datum.net` — bukan
+> `personal-project-86e0525b` di bawah. Admission mengonfirmasi kota yang
+> didukung project ini adalah `DFW`. Ganti context sesuai project yang
+> sedang kamu pakai sebelum menjalankan perintah manapun di halaman ini:
+> `datumctl ctx list` untuk melihat opsi yang ada.
+
+### Status akun sebelumnya (dicek 2026-08-19, read-only)
 
 Sebagian jalur sudah selesai, jadi jangan ulangi dari nol:
 
