@@ -109,6 +109,13 @@ jobs:
       contents: read
       packages: write
     timeout-minutes: 30
+    env:
+      # Beberapa panggilan brew berturut-turut (tap, trust, install) memicu
+      # "Error: Broken pipe" dari auto-update/analytics brew di background
+      # pada runner ini — dua env ini mematikannya.
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+      HOMEBREW_NO_ANALYTICS: "1"
+      HOMEBREW_NO_INSTALL_CLEANUP: "1"
 
     # Sekali setup sebelum bisa dipakai:
     #   Settings -> Secrets and variables -> Actions -> New repository secret
@@ -175,6 +182,10 @@ jobs:
       contents: read
       packages: write
     timeout-minutes: 30
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+      HOMEBREW_NO_ANALYTICS: "1"
+      HOMEBREW_NO_INSTALL_CLEANUP: "1"
 
     steps:
       - uses: actions/checkout@v4
