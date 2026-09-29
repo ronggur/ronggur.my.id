@@ -1,51 +1,12 @@
-# Bangun image dan push ke ghcr.io. Workflow ini TIDAK men-deploy apa pun ke
-# Datum — deploy tetap manual dari terminal, lihat deploy-manual.md.
-#
-# Tiga mode, dipilih saat menjalankan:
-#
-#   rootfs (default)  Build ./Dockerfile.unikraft sebagai Docker image biasa
-#                     dan push ke ghcr.io. Tidak butuh secret — GITHUB_TOKEN
-#                     bawaan sudah cukup berkat `packages: write`.
-#                     TERBUKTI JALAN (2026-08-25): push tanpa secret, package
-#                     bisa ditarik anonim. Tapi hasilnya BUKAN unikernel —
-#                     tidak akan boot di cell Datum. Gunanya membuktikan
-#                     rantai registry selagi jalur unikernel belum jalan.
-#
-#   unikraft          Build unikernel sungguhan dengan `unikraft build` (CLI
-#                     Unikraft Cloud, github.com/unikraft/homebrew-cli — beda
-#                     dari `kraft`/KraftKit di mode unikernel di bawah). Butuh
-#                     secret UKC_TOKEN, sebuah access token Unikraft Cloud
-#                     (lihat komentar di job-nya). TERBUKTI JALAN LOKAL
-#                     (2026-08-25): menghasilkan manifest platform
-#                     kraftcloud/x86_64 dengan layer org.unikraft.kernel.image
-#                     dan org.unikraft.kernel.initrd — persis yang dicari
-#                     kraftlet. BELUM diverifikasi di CI, dan belum
-#                     diverifikasi bisa Ready di Datum (base komunitas vs
-#                     enterprise, L51, masih pertanyaan terbuka).
-#
-#   unikernel         Build lewat `kraft pkg` (KraftKit), menarik base-compat
-#                     dari index.unikraft.io. Butuh secret KRAFT_USER dan
-#                     KRAFT_TOKEN; base-compat hanya bisa ditarik akun yang
-#                     punya akses (L51) — BLOCKED per 2026-08-19, belum ada
-#                     akun begitu. Dipertahankan sebagai jalur alternatif
-#                     kalau akses itu didapat nanti.
-#
-# Sengaja hanya workflow_dispatch: tidak pernah jalan sendiri saat push.
+# Build image container dan push ke ghcr.io. Tidak men-deploy.
+# Perintah yang sama ada di docs/deploy.md.
 name: publish-image
 
 on:
   workflow_dispatch:
     inputs:
-      mode:
-        description: "Apa yang dibangun"
-        type: choice
-        default: rootfs
-        options:
-          - rootfs
-          - unikraft
-          - unikernel
       tag:
-        description: "Tag image (default: mode + commit SHA pendek)"
+        description: "Tag image (default: rootfs + commit SHA pendek)"
         required: false
         type: string
 
@@ -53,8 +14,7 @@ env:
   IMAGE: ghcr.io/${{ github.repository_owner }}/ronggur-my-id
 
 jobs:
-  rootfs:
-    if: inputs.mode == 'rootfs'
+  container:
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -72,14 +32,17 @@ jobs:
         run: |
           TAG="${{ inputs.tag }}"
           [ -n "$TAG" ] || TAG="rootfs-${GITHUB_SHA::7}"
+          # Attestation membuat OCI image index. Runtime memilih manifest Docker v2.
+          # oci-mediatypes adalah opsi exporter, jadi push lewat --output.
           docker buildx build \
             --platform linux/amd64 \
+            --provenance=false --sbom=false \
             -f Dockerfile.unikraft \
             --label org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }} \
             --label org.opencontainers.image.revision=$GITHUB_SHA \
-            --label org.opencontainers.image.description="Rootfs image (plain Docker image, not a unikernel)" \
+            --label org.opencontainers.image.description="Static site, general-purpose runtime" \
             -t "$IMAGE:$TAG" \
-            --push .
+            --output type=image,push=true,oci-mediatypes=false .
           echo "ref=$IMAGE:$TAG" >> "$GITHUB_OUTPUT"
 
       - name: Laporkan digest
@@ -94,138 +57,5 @@ jobs:
             echo "$IMAGE@$DIGEST"
             echo '```'
             echo ""
-            echo "**Ini Docker image biasa, bukan unikernel** — tidak akan boot di cell Datum."
-            echo "Langkah berikutnya: pastikan package-nya publik, lalu buktikan bisa ditarik anonim:"
-            echo ""
-            echo '```sh'
-            echo "docker logout ghcr.io && crane manifest $IMAGE@$DIGEST"
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
-
-  unikraft:
-    if: inputs.mode == 'unikraft'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-    timeout-minutes: 30
-    env:
-      # Beberapa panggilan brew berturut-turut (tap, trust, install) memicu
-      # "Error: Broken pipe" dari auto-update/analytics brew di background
-      # pada runner ini — dua env ini mematikannya.
-      HOMEBREW_NO_AUTO_UPDATE: "1"
-      HOMEBREW_NO_ANALYTICS: "1"
-      HOMEBREW_NO_INSTALL_CLEANUP: "1"
-
-    # Sekali setup sebelum bisa dipakai:
-    #   Settings -> Secrets and variables -> Actions -> New repository secret
-    #   UKC_TOKEN — access token Unikraft Cloud dari akun yang sudah login
-    #   (lihat `unikraft login --check`; dashboard Unikraft Cloud punya
-    #   halaman token API — belum diverifikasi persis URL-nya, cek akun
-    #   yang dipakai `unikraft login` di laptop).
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Pasang Homebrew ke PATH
-        # Preinstalled di runner tapi tidak otomatis di PATH shell Actions.
-        run: echo "$(brew --prefix 2>/dev/null || echo /home/linuxbrew/.linuxbrew)/bin" >> "$GITHUB_PATH"
-
-      - name: Pasang unikraft CLI
-        run: |
-          brew tap unikraft/cli
-          brew trust --formula unikraft/cli/unikraft
-          brew install unikraft
-
-      - name: Siapkan endpoint BuildKit
-        # `unikraft build` bicara langsung ke BuildKit, bukan lewat socket
-        # Docker biasa — driver docker-container yang menyediakannya.
-        run: |
-          docker buildx create --name unikraft-builder --driver docker-container --bootstrap
-          echo "BUILDKIT_HOST=docker-container://buildx_buildkit_unikraft-builder0" >> "$GITHUB_ENV"
-
-      - name: Login
-        env:
-          UKC_TOKEN: ${{ secrets.UKC_TOKEN }}
-        run: |
-          [ -n "$UKC_TOKEN" ] || { echo "::error::secret UKC_TOKEN belum diisi — lihat komentar di atas file ini"; exit 1; }
-          echo "$UKC_TOKEN" | unikraft login --no-browser --token -
-          echo '${{ secrets.GITHUB_TOKEN }}' | docker login ghcr.io -u '${{ github.actor }}' --password-stdin
-
-      - name: Build dan push unikernel
-        id: build
-        run: |
-          TAG="${{ inputs.tag }}"
-          [ -n "$TAG" ] || TAG="unikraft-${GITHUB_SHA::7}"
-          unikraft build . --output "$IMAGE:$TAG"
-          echo "ref=$IMAGE:$TAG" >> "$GITHUB_OUTPUT"
-
-      - name: Laporkan digest untuk di-pin manual
-        run: |
-          REF='${{ steps.build.outputs.ref }}'
-          DIGEST="$(docker buildx imagetools inspect "$REF" --format '{{.Manifest.Digest}}')"
-          docker buildx imagetools inspect "$REF" --raw | jq -c '.manifests // [] | map(.platform)' || true
-          {
-            echo "### Unikernel siap di-deploy (belum terverifikasi Ready di Datum)"
-            echo ""
-            echo '```'
-            echo "$IMAGE@$DIGEST"
-            echo '```'
-            echo ""
-            echo "Pin baris \`image:\` di workload.yaml ke referensi di atas, lalu jalankan"
-            echo "\`datumctl compute deploy -f workload.yaml\` dari terminal."
-          } >> "$GITHUB_STEP_SUMMARY"
-
-  unikernel:
-    if: inputs.mode == 'unikernel'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-    timeout-minutes: 30
-    env:
-      HOMEBREW_NO_AUTO_UPDATE: "1"
-      HOMEBREW_NO_ANALYTICS: "1"
-      HOMEBREW_NO_INSTALL_CLEANUP: "1"
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Pasang Homebrew ke PATH
-        run: echo "$(brew --prefix 2>/dev/null || echo /home/linuxbrew/.linuxbrew)/bin" >> "$GITHUB_PATH"
-
-      - name: Pasang toolchain
-        run: brew install kraftkit crane
-
-      - name: Login ke registry
-        env:
-          KRAFT_USER: ${{ secrets.KRAFT_USER }}
-          KRAFT_TOKEN: ${{ secrets.KRAFT_TOKEN }}
-        run: |
-          [ -n "$KRAFT_TOKEN" ] || { echo "::error::secret KRAFT_TOKEN belum diisi — lihat komentar di atas file ini"; exit 1; }
-          kraft login --user "$KRAFT_USER" --token "$KRAFT_TOKEN" index.unikraft.io
-          echo '${{ secrets.GITHUB_TOKEN }}' | docker login ghcr.io -u '${{ github.actor }}' --password-stdin
-          crane auth login ghcr.io -u '${{ github.actor }}' -p '${{ secrets.GITHUB_TOKEN }}'
-
-      - name: Build dan push unikernel
-        id: build
-        run: |
-          TAG="${{ inputs.tag }}"
-          [ -n "$TAG" ] || TAG="${GITHUB_SHA::7}"
-          kraft pkg --name "$IMAGE:$TAG" --plat kraftcloud --arch x86_64 --push .
-          echo "ref=$IMAGE:$TAG" >> "$GITHUB_OUTPUT"
-
-      - name: Laporkan digest untuk di-pin manual
-        run: |
-          REF='${{ steps.build.outputs.ref }}'
-          DIGEST="$(crane digest "$REF")"
-          crane manifest "$REF" | jq -c '.manifests // [] | map(.platform)'
-          {
-            echo "### Unikernel siap di-deploy"
-            echo ""
-            echo '```'
-            echo "$IMAGE@$DIGEST"
-            echo '```'
-            echo ""
-            echo "Pin baris \`image:\` di workload.yaml ke referensi di atas, lalu jalankan"
-            echo "\`datumctl compute deploy -f workload.yaml\` dari terminal."
+            echo "Deploy memakai digest, bukan tag. Lihat docs/deploy.md."
           } >> "$GITHUB_STEP_SUMMARY"

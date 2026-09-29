@@ -8,28 +8,9 @@ Datum compute
 
 ## Deploy ke Datum Compute
 
-Situs ini disiapkan untuk jalan sebagai unikernel di Datum Compute:
-
-- `Kraftfile` + `Dockerfile.unikraft` — image unikernel (server statis Go,
-  `index.html` + `flappy-bird-assets/`). `Dockerfile` nginx tetap untuk lokal.
-- `project.yaml` — manifest project Datum (`personal-project-86e0525b`; project-nya sudah ada, jadi tidak perlu di-apply).
-- `deploy/datum/` — `Workload`, overlay digest pin, manifest ingress, dan skrip
-  build/deploy/re-point/verify.
-- `.github/workflows/publish-image.yml` — manual-dispatch, dua mode: `rootfs`
-  (Docker image biasa, tanpa secret) dan `unikernel` (butuh kredensial
-  index.unikraft.io). Tidak men-deploy; deploy tetap dari terminal.
-
-Tiga dokumen, dari yang paling detail:
-
-- [deploy-manual.md](deploy-manual.md) — panduan langkah demi langkah, semua
-  perintah `datumctl`/`kraft`/`kubectl` diketik langsung tanpa skrip, lengkap
-  dengan output yang diharapkan dan tabel error.
-- [deploy/datum/README.md](deploy/datum/README.md) — runbook ringkas dengan skrip.
-- [compute.md](compute.md) — catatan persiapan: keputusan desain, hasil test,
-  dan apa yang masih memblokir.
-
-Uji server yang sama dengan yang jalan di produksi, secara lokal:
+- [docs/deploy.md](docs/deploy.md) — build image dan deploy.
+- `Dockerfile` nginx tetap untuk lokal. `Dockerfile.unikraft` adalah image yang di-push.
 
 ```sh
-deploy/datum/scripts/serve-local.sh 8080
+cd server && PORT=8080 SITE_ROOT=.. go run .
 ```
