@@ -1,0 +1,10 @@
+apiVersion: networking.datumapis.com/v1alpha
+kind: Network
+metadata:
+  name: ronggur-my-id
+  namespace: default
+spec:
+  ipFamilies: [IPv6]
+  ipam:
+    mode: Auto
+  mtu: 1440

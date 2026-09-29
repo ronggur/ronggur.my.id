@@ -1,0 +1,13 @@
+# Custom domain on the HTTPProxy that `datumctl compute deploy` creates.
+# Applied server-side with its own field manager so the compute controller's
+# spec.rules stay untouched. Re-apply after every destroy/redeploy: a new
+# HTTPProxy starts without hostnames.
+apiVersion: networking.datumapis.com/v1alpha
+kind: HTTPProxy
+metadata:
+  name: ronggur-my-id
+  namespace: default
+spec:
+  hostnames:
+  - ronggur.my.id
+  - www.ronggur.my.id

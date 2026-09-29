@@ -44,9 +44,7 @@ datumctl compute deploy ronggur-my-id \
   --project=personal-project-86e0525b
 ```
 
-URL: https://avenue-shark-tjrc6.datumproxy.net
-
-DNS-nya hanya IPv6. Perintah ini menulis `workload.yaml` di direktori kerja.
+URL: https://avenue-shark-tjrc6.datumproxy.net (A dan AAAA). Perintah ini menulis `workload.yaml` di direktori kerja.
 Jangan di-commit.
 
 ```bash
@@ -54,27 +52,50 @@ datumctl compute instances --workload=ronggur-my-id --project=personal-project-8
 datumctl compute destroy ronggur-my-id --project=personal-project-86e0525b
 ```
 
-Kalau network-nya hilang, buat sekali:
-
-```yaml
-apiVersion: networking.datumapis.com/v1alpha
-kind: Network
-metadata:
-  name: ronggur-my-id
-  namespace: default
-spec:
-  ipFamilies: [IPv6]
-  ipam:
-    mode: Auto
-  mtu: 1440
-```
+Kalau network-nya hilang, buat sekali dari `datum/network.yaml`:
 
 ```bash
-datumctl apply -f network.yaml --project=personal-project-86e0525b
+datumctl apply -f datum/network.yaml --project=personal-project-86e0525b
 ```
 
 Tanpa `--network=ronggur-my-id`, workload menempel ke `default`, yang di
 project ini IPv4 dan tidak pernah dapat alamat.
+
+## Domain ronggur.my.id
+
+`ronggur.my.id` dan `www.ronggur.my.id` diarahkan ke workload ini (sejak
+2026-09-29; sebelumnya A record ke `45.77.171.60`).
+
+```bash
+datumctl apply --server-side --field-manager=ronggur \
+  -f datum/httpproxy-hostnames.yaml --project=personal-project-86e0525b
+datumctl apply -f datum/dns.yaml --project=personal-project-86e0525b
+```
+
+- `datum/httpproxy-hostnames.yaml` menambah `spec.hostnames` ke HTTPProxy
+  yang dibuat `compute deploy`. Server-side apply dengan field manager
+  sendiri, supaya `spec.rules` milik controller compute tidak tersentuh.
+- Record `www` dibuat dan dikelola Datum sendiri begitu hostname-nya masuk
+  HTTPProxy (ALIAS, label `dns.datumapis.com/managed=true`). Jangan buat
+  manual.
+- Apex tidak dibuatkan, jadi `datum/dns.yaml` berisi ALIAS `@` ke hostname
+  datumproxy.
+- A/CNAME lain di nama yang sama menghalangi record otomatis
+  (`DNSRecordProgrammed=Pending`) dan sertifikat.
+- Setelah `destroy` + deploy ulang, HTTPProxy dibuat baru tanpa hostnames dan
+  hostname datumproxy bisa berganti. Apply ulang kedua file, dan sesuaikan
+  `content` di `datum/dns.yaml` dengan:
+
+```bash
+datumctl get httpproxy ronggur-my-id -o jsonpath='{.status.canonicalHostname}' \
+  --project=personal-project-86e0525b
+```
+
+Cek status sampai `Programmed=True`:
+
+```bash
+datumctl get httpproxy ronggur-my-id -o yaml --project=personal-project-86e0525b
+```
 
 ## Lokal
 

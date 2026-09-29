@@ -1,0 +1,21 @@
+# Apex record for ronggur.my.id -> Datum compute. An apex cannot be a CNAME,
+# so it is an ALIAS. `www` is NOT here: once www.ronggur.my.id is in the
+# HTTPProxy's hostnames, Datum creates and owns that record itself
+# (a DNSRecordSet labelled dns.datumapis.com/managed=true). It does not do
+# that for the apex. If the workload is recreated and the datumproxy.net
+# hostname changes, update content from the HTTPProxy's
+# status.canonicalHostname.
+apiVersion: dns.networking.miloapis.com/v1alpha1
+kind: DNSRecordSet
+metadata:
+  name: ronggur-my-id-38gvr7-apex
+  namespace: default
+spec:
+  dnsZoneRef:
+    name: ronggur-my-id-38gvr7
+  recordType: ALIAS
+  records:
+  - name: '@'
+    ttl: 300
+    alias:
+      content: avenue-shark-tjrc6.datumproxy.net.
