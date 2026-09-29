@@ -51,7 +51,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:              ":" + port,
-		Handler:           mux,
+		Handler:           forceHTTPS(mux),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      60 * time.Second,
@@ -62,6 +62,25 @@ func main() {
 	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatalf("listen: %v", err)
 	}
+}
+
+// forceHTTPS redirects plain-HTTP requests to HTTPS and sets HSTS on HTTPS
+// ones. TLS ends at the Datum edge, so the scheme is only known from the
+// X-Forwarded-Proto header the proxy adds. Without that header (local runs,
+// direct hits) nothing changes. /healthz is never redirected.
+func forceHTTPS(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Header.Get("X-Forwarded-Proto") {
+		case "http":
+			if r.URL.Path != "/healthz" {
+				http.Redirect(w, r, "https://"+r.Host+r.URL.RequestURI(), http.StatusMovedPermanently)
+				return
+			}
+		case "https":
+			w.Header().Set("Strict-Transport-Security", "max-age=31536000")
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 type siteHandler struct{ root string }
