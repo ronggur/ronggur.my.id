@@ -22,10 +22,28 @@ docker buildx imagetools inspect ghcr.io/ronggur/ronggur-my-id:container \
 `--provenance=false`, `--sbom=false`, dan `oci-mediatypes=false` supaya yang
 ter-push manifest Docker v2, bukan OCI index. Package harus publik.
 
-Actions → **publish-image** melakukan build yang sama. Tag default
-`rootfs-<sha>`.
+Actions → **publish-image** melakukan build yang sama dari `main`, tanpa
+Docker lokal. Tag default `rootfs-<sha pendek>`, digest-nya ada di summary
+run. Dari terminal:
 
-Yang sedang jalan:
+```bash
+gh workflow run publish-image.yml --ref main
+gh run watch "$(gh run list --workflow=publish-image.yml --limit 1 --json databaseId -q '.[0].databaseId')" --exit-status
+```
+
+Ambil digest dan pastikan media type-nya Docker v2, juga tanpa Docker:
+
+```bash
+TAG=rootfs-$(git rev-parse --short=7 HEAD)
+T=$(curl -s "https://ghcr.io/token?scope=repository:ronggur/ronggur-my-id:pull" | python3 -c 'import sys,json;print(json.load(sys.stdin)["token"])')
+curl -sI -H "Authorization: Bearer $T" \
+  -H 'Accept: application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.index.v1+json' \
+  "https://ghcr.io/v2/ronggur/ronggur-my-id/manifests/$TAG" | grep -iE 'content-type|docker-content-digest'
+```
+
+`content-type` harus `application/vnd.docker.distribution.manifest.v2+json`.
+
+Yang sedang jalan (`rootfs-bc49e54`, sejak 2026-09-29):
 `ghcr.io/ronggur/ronggur-my-id@sha256:12e541067dbdc770dfaf2513c983ef9c162bc7294c196e8160215de71b3bac6c`
 
 ## Deploy
@@ -44,12 +62,43 @@ datumctl compute deploy ronggur-my-id \
   --project=personal-project-86e0525b
 ```
 
-URL: https://avenue-shark-tjrc6.datumproxy.net (A dan AAAA). `http://`
-di-redirect 301 ke https oleh server (`X-Forwarded-Proto`), plus HSTS.
+URL: https://ronggur.my.id dan https://avenue-shark-tjrc6.datumproxy.net
+(A dan AAAA).
 
-Deploy ulang ke workload yang sama meng-update di tempat: HTTPProxy dan
-`hostnames`-nya tetap. Perintah ini menulis `workload.yaml` di direktori kerja.
-Jangan di-commit.
+Deploy ulang ke workload yang sama meng-update di tempat: rollout beberapa
+detik, HTTPProxy dan `hostnames`-nya tetap. Perintah ini menulis
+`workload.yaml` di direktori kerja (sudah di-gitignore). Jangan di-commit.
+
+Jadi update situs = ubah kode, push, jalankan **publish-image**, ambil
+digest, ganti `--image` di perintah di atas, deploy, verifikasi. Lalu
+perbarui digest "yang sedang jalan" di file ini.
+
+### Verifikasi setelah deploy
+
+```bash
+curl -sS -o /dev/null -w '%{http_code} %{redirect_url}\n' http://ronggur.my.id/
+# 301 https://ronggur.my.id/
+curl -sS -D - -o /dev/null https://ronggur.my.id/ | grep -iE '^HTTP|strict'
+# HTTP/2 200, strict-transport-security: max-age=31536000
+curl -sS https://ronggur.my.id/healthz
+# ok
+```
+
+### HTTP ke HTTPS
+
+TLS diterminasi di edge Datum, dan Gateway-nya juga membuka port 80 untuk
+tiap hostname. HTTPProxy tidak punya setelan force-HTTPS, jadi redirect-nya
+di server (`forceHTTPS` di `server/main.go`):
+
+- `X-Forwarded-Proto: http` → 301 ke URL yang sama di https (path dan query
+  ikut).
+- `X-Forwarded-Proto: https` → header `Strict-Transport-Security:
+  max-age=31536000`.
+- Tanpa header itu (jalan lokal) tidak ada yang berubah. `/healthz` tidak
+  pernah di-redirect.
+
+HSTS berlaku setahun di browser yang pernah membuka situs ini. Selama itu
+domain ini harus tetap punya HTTPS yang valid, di mana pun ia di-host.
 
 ```bash
 datumctl compute instances --workload=ronggur-my-id --project=personal-project-86e0525b
@@ -178,4 +227,12 @@ EOF
 
 ```bash
 cd server && PORT=8080 SITE_ROOT=.. go run .
+```
+
+Mensimulasikan edge Datum untuk mengetes redirect:
+
+```bash
+curl -sI -H 'Host: ronggur.my.id' -H 'X-Forwarded-Proto: http' http://127.0.0.1:8080/
+# 301, Location: https://ronggur.my.id/
+curl -sI -H 'X-Forwarded-Proto: https' http://127.0.0.1:8080/ | grep -i strict
 ```
