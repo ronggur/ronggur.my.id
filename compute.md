@@ -14,7 +14,7 @@ keadaan saat itu; semua itu sudah dihapus dari repo (2026-09-29).
 **Keadaan per 2026-09-29:**
 
 - Workload `ronggur-my-id` jalan di `us-central-1`, kelas `general-purpose`,
-  image `ghcr.io/ronggur/ronggur-my-id@sha256:abd98747…`, network IPv6
+  image `ghcr.io/ronggur/ronggur-my-id@sha256:12e54106…` (`rootfs-bc49e54`), network IPv6
   `ronggur-my-id`. Di-deploy dengan satu `datumctl compute deploy` (§7).
 - `https://ronggur.my.id`, `https://www.ronggur.my.id`, dan
   `https://avenue-shark-tjrc6.datumproxy.net` menyajikan situs ini.
@@ -855,3 +855,28 @@ Yang perlu diingat:
   diperbarui juga.
 - TTL A record lama 14400 detik. Server lama sebaiknya tetap hidup sampai
   sekitar 2026-09-29 23:00 WIB.
+
+## 9. HTTP ke HTTPS (2026-09-29)
+
+`http://` tadinya menyajikan situs apa adanya (200). Gateway buatan Datum
+punya listener 80 dan 443 per hostname dan route kita menempel ke semuanya;
+HTTPProxy tidak punya setelan force-HTTPS, dan match route tidak bisa
+membedakan skema.
+
+Jadi redirect-nya di `server/main.go` (`forceHTTPS`): `X-Forwarded-Proto:
+http` dapat 301 ke URL yang sama di https, `https` dapat
+`Strict-Transport-Security: max-age=31536000`. Tanpa header itu (jalan
+lokal) tidak ada yang berubah, dan `/healthz` tidak pernah di-redirect.
+
+Envoy di edge Datum terbukti mengirim `X-Forwarded-Proto`. Setelah deploy
+image `rootfs-bc49e54`:
+
+- `http://ronggur.my.id/`, `www`, dan hostname datumproxy: 301 ke https,
+  path dan query ikut.
+- `http://ronggur.my.id/healthz`: 200.
+- `https://ronggur.my.id/`: 200 dengan HSTS.
+
+`compute deploy` ke workload yang sudah ada meng-update di tempat: rollout 6
+detik, HTTPProxy tetap objek yang sama (UID tidak berubah) dan `hostnames`
+tidak tersentuh. Jadi hanya `destroy` yang mengharuskan domain dipasang
+ulang.

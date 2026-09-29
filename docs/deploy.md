@@ -26,7 +26,7 @@ Actions → **publish-image** melakukan build yang sama. Tag default
 `rootfs-<sha>`.
 
 Yang sedang jalan:
-`ghcr.io/ronggur/ronggur-my-id@sha256:abd987474d45c336aeb2607e10fef0830556b6241158daf16d0d80b7981b4ba4`
+`ghcr.io/ronggur/ronggur-my-id@sha256:12e541067dbdc770dfaf2513c983ef9c162bc7294c196e8160215de71b3bac6c`
 
 ## Deploy
 
@@ -34,7 +34,7 @@ Yang sedang jalan:
 
 ```bash
 datumctl compute deploy ronggur-my-id \
-  --image=ghcr.io/ronggur/ronggur-my-id@sha256:abd987474d45c336aeb2607e10fef0830556b6241158daf16d0d80b7981b4ba4 \
+  --image=ghcr.io/ronggur/ronggur-my-id@sha256:12e541067dbdc770dfaf2513c983ef9c162bc7294c196e8160215de71b3bac6c \
   --location=us-central-1 \
   --network=ronggur-my-id \
   --http-port=8080 \
@@ -44,7 +44,11 @@ datumctl compute deploy ronggur-my-id \
   --project=personal-project-86e0525b
 ```
 
-URL: https://avenue-shark-tjrc6.datumproxy.net (A dan AAAA). Perintah ini menulis `workload.yaml` di direktori kerja.
+URL: https://avenue-shark-tjrc6.datumproxy.net (A dan AAAA). `http://`
+di-redirect 301 ke https oleh server (`X-Forwarded-Proto`), plus HSTS.
+
+Deploy ulang ke workload yang sama meng-update di tempat: HTTPProxy dan
+`hostnames`-nya tetap. Perintah ini menulis `workload.yaml` di direktori kerja.
 Jangan di-commit.
 
 ```bash
