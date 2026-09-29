@@ -1,6 +1,7 @@
 # Unikernel build for Datum Compute. Cells boot unikernels under kraftlet,
 # so the nginx image in ./Dockerfile does not boot there (limits register L10).
-# Build with: deploy/datum/scripts/build-push.sh
+# Not used by the current deploy (general-purpose runtime, docs/deploy.md).
+# Kept for the unikernel path; see compute.md for why it is blocked (L51).
 spec: v0.7
 
 name: ronggur-my-id

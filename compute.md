@@ -7,6 +7,22 @@ register di `compute-handbook/reference.md`.
 
 Panduan yang berlaku: [docs/deploy.md](docs/deploy.md).
 File ini adalah catatan **apa yang dikerjakan, kenapa, dan apa hasil tesnya**.
+Isinya ditulis berurutan waktu. Bagian lama yang menyebut `deploy/datum/`,
+`deploy-manual.md`, skrip, kustomize, atau jalur unikernel menggambarkan
+keadaan saat itu; semua itu sudah dihapus dari repo (2026-09-29).
+
+**Keadaan per 2026-09-29:**
+
+- Workload `ronggur-my-id` jalan di `us-central-1`, kelas `general-purpose`,
+  image `ghcr.io/ronggur/ronggur-my-id@sha256:abd98747…`, network IPv6
+  `ronggur-my-id`. Di-deploy dengan satu `datumctl compute deploy` (§7).
+- `https://ronggur.my.id`, `https://www.ronggur.my.id`, dan
+  `https://avenue-shark-tjrc6.datumproxy.net` menyajikan situs ini.
+  Terbukti lewat IPv4; IPv6 belum teruji karena laptop tes tidak punya
+  IPv6 ke internet (§8).
+- Repo: `server/` (server Go), `Dockerfile.unikraft` (image yang di-push),
+  `datum/` (network, hostname HTTPProxy, ALIAS apex), `docs/deploy.md`.
+  Workflow `publish-image` hanya build + push image container.
 
 ## 1. Kesimpulan kelayakan
 
@@ -40,6 +56,9 @@ handbook. Tidak ada komponen yang perlu ditinggal.
 | Placement DFW | Satu-satunya kota yang terbukti live di verification run handbook. `personal-project-86e0525b` mengikat `dfw`, `iad`, `sjc` — ketiganya Available |
 
 ## 3. Yang ditambahkan ke repo
+
+> **Sejarah.** Daftar di bawah adalah isi repo 2026-08-19 sampai 2026-09-22.
+> Yang tersisa sekarang ada di "Keadaan per 2026-09-29" di atas.
 
 > **Update 2026-09-22.** Dua file baru di `deploy/datum/base/`:
 > `networkservice.yaml` dan `httpproxy.yaml` — pasangan objek yang menerbitkan
@@ -692,6 +711,9 @@ ketiga — ketiga network buatan `compute-portal-demo` memakainya.
 Perintah yang berlaku ada di [docs/deploy.md](docs/deploy.md). Bagian ini
 catatan rencana 2026-09-22, sebelum folder `deploy/datum` dihapus.
 
+> **Hasil.** Langkah 1–4 selesai 2026-09-28 lewat jalur flags, bukan skrip
+> (§7). Langkah 5 selesai 2026-09-29 (§8). Langkah 6 belum.
+
 Ditulis ulang 2026-09-22 sore setelah §4e. Dibanding versi sebelumnya, tiga
 langkah hilang: update CLI (sudah), build image (sudah ada), dan `destroy`
 workload lama (project-nya ikut terhapus). Yang bertambah satu: network.
@@ -752,9 +774,9 @@ di dalam image, tapi `drop: [ALL]` tidak.
 
 ## 7. Tes jalur flags (2026-09-28)
 
-Jalur B dijalankan hidup, bukan hanya dry-run. Perintah lengkapnya ada di
-[deploy/datum/README.md](deploy/datum/README.md) bagian "B. Tanpa
-`workload.yaml`". Ringkasnya: `network.yaml` di-apply dulu, lalu
+Jalur B dijalankan hidup, bukan hanya dry-run. Perintah yang berlaku ada di
+[docs/deploy.md](docs/deploy.md). Ringkasnya: `datum/network.yaml` di-apply
+dulu, lalu
 
 ```sh
 datumctl compute deploy ronggur-my-id \
@@ -787,3 +809,49 @@ Yang teramati:
   timeout, jadi badan halaman belum terkonfirmasi.
 - CLI menulis `workload.yaml` di root repo (dump dengan `managedFields`).
   File itu dihapus; jangan di-commit.
+
+Pembaruan 2026-09-29: A record untuk hostname datumproxy sekarang ada
+(`67.14.164.1`, `67.14.165.1`), dan halaman terkonfirmasi lewat IPv4.
+
+## 8. ronggur.my.id dipindah ke Datum compute (2026-09-29)
+
+Sebelumnya `@` dan `www` di zone `ronggur-my-id-38gvr7` adalah A record ke
+`45.77.171.60`. Domain `ronggur.my.id` sudah Verified sejak 2026-08-12, jadi
+tidak ada langkah verifikasi. Langkah yang berlaku ada di
+[docs/deploy.md](docs/deploy.md) bagian "Domain ronggur.my.id".
+
+Urutan yang dijalankan:
+
+1. `spec.hostnames: [ronggur.my.id, www.ronggur.my.id]` ke HTTPProxy lewat
+   server-side apply dengan field manager `ronggur`. Controller compute hanya
+   memiliki `spec.rules`, jadi keduanya tidak bertabrakan. Kedua hostname
+   langsung `Claimed`, `HostnamesVerified=True`.
+2. Datum **membuat sendiri** DNSRecordSet `ronggur-my-id-4f3ad448`: ALIAS
+   `www` ke `avenue-shark-tjrc6.datumproxy.net.`, dimiliki Gateway
+   `ronggur-my-id`, label `dns.datumapis.com/managed=true`. Record ini tertahan
+   di `DNSRecordProgrammed=Pending` karena A record `www` yang lama masih ada.
+   Untuk apex tidak dibuatkan apa pun.
+3. Sertifikat kedua hostname tertahan `Pending` selama DNS masih ke server
+   lama, dan `Programmed` HTTPProxy turun ke `False`. URL datumproxy tetap 200
+   selama itu.
+4. Recordset `ronggur-my-id-38gvr7-a` dihapus. Record `www` otomatis langsung
+   `RecordCreated` dan sertifikatnya terbit.
+5. ALIAS `@` dipasang dari `datum/dns.yaml` (recordset
+   `ronggur-my-id-38gvr7-apex`). Nameserver Datum langsung menjawab A dan AAAA
+   milik proxy; sertifikat apex terbit kurang dari satu menit kemudian.
+   Antara langkah 4 dan 5 apex tidak punya record, beberapa menit.
+
+Hasil: kedua hostname 200 lewat IPv4 dengan sertifikat Let's Encrypt
+(`CN=ronggur.my.id`, issuer `YR1`), 1.1.1.1 dan 8.8.8.8 sudah menjawab alamat
+Datum. IPv6 tidak bisa dites dari laptop ini (§7).
+
+Yang perlu diingat:
+
+- Kalau diulang, rencanakan langkah 1 → 4 → 5 berturut-turut. Menunggu
+  sertifikat sebelum mengganti DNS tidak ada gunanya: sertifikat baru terbit
+  setelah DNS mengarah ke Datum.
+- `destroy` + deploy ulang membuat HTTPProxy baru tanpa `hostnames`, dan
+  hostname datumproxy-nya bisa berganti. `datum/dns.yaml` lalu harus
+  diperbarui juga.
+- TTL A record lama 14400 detik. Server lama sebaiknya tetap hidup sampai
+  sekitar 2026-09-29 23:00 WIB.

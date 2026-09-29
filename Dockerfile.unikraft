@@ -1,5 +1,6 @@
-# Root filesystem for the Datum Compute unikernel (see ./Kraftfile).
-# Build normally, then copy the minimum viable filesystem into FROM scratch.
+# The image deployed to Datum Compute (general-purpose runtime, docs/deploy.md).
+# It doubles as the rootfs for the unikernel path in ./Kraftfile, which is not
+# in use. Build normally, then copy the minimum viable filesystem into FROM scratch.
 #
 # By hand (kraft drives BuildKit itself, so this is only for checking the
 # rootfs — pass --platform or the image config claims the build host's arch):
