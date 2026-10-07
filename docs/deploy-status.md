@@ -112,7 +112,8 @@ Tulis hasilnya di `bug-log.md` (template di `datum-test-ideas.md`).
 Ubah kode, push, jalankan **publish-status-image**, ambil digest baru, ulang
 perintah deploy dengan digest itu (meng-update di tempat, hostname tetap).
 
-Digest yang sedang jalan: _belum ada_.
+Image terbaru (`status-e19bb77`, belum dideploy):
+`ghcr.io/ronggur/status-ronggur-my-id@sha256:81775cc62c0d849fb60b70a0b730975ff64eb135df42232de74ad5e3a52685e4`
 
 ## Cabut
 
