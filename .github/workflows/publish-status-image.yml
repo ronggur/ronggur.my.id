@@ -1,0 +1,64 @@
+# Build image status page dan push ke ghcr.io. Tidak men-deploy.
+# Perintah yang sama ada di docs/deploy-status.md.
+name: publish-status-image
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag image (default: status + commit SHA pendek)"
+        required: false
+        type: string
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/status-ronggur-my-id
+
+jobs:
+  container:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Test
+        run: cd status && go vet ./... && go test ./...
+
+      - name: Login ke ghcr.io
+        run: echo '${{ secrets.GITHUB_TOKEN }}' | docker login ghcr.io -u '${{ github.actor }}' --password-stdin
+
+      - name: Build dan push
+        id: build
+        run: |
+          TAG="${{ inputs.tag }}"
+          [ -n "$TAG" ] || TAG="status-${GITHUB_SHA::7}"
+          # Sama seperti publish-image: manifest Docker v2, bukan OCI index.
+          docker buildx build \
+            --platform linux/amd64 \
+            --provenance=false --sbom=false \
+            --build-arg COMMIT="${GITHUB_SHA::7}" \
+            -f status/Dockerfile \
+            --label org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }} \
+            --label org.opencontainers.image.revision=$GITHUB_SHA \
+            --label org.opencontainers.image.description="Status page, general-purpose runtime" \
+            -t "$IMAGE:$TAG" \
+            --output type=image,push=true,oci-mediatypes=false status
+          echo "ref=$IMAGE:$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Laporkan digest
+        run: |
+          REF='${{ steps.build.outputs.ref }}'
+          DIGEST="$(docker buildx imagetools inspect "$REF" --format '{{.Manifest.Digest}}')"
+          {
+            echo "### Image ter-push"
+            echo ""
+            echo '```'
+            echo "$REF"
+            echo "$IMAGE@$DIGEST"
+            echo '```'
+            echo ""
+            echo "Deploy memakai digest, bukan tag. Lihat docs/deploy-status.md."
+          } >> "$GITHUB_STEP_SUMMARY"

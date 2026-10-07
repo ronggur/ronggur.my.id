@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Status — ronggur.my.id</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #fff; --fg: #1b2430; --muted: #627086; --line: #e1e5eb;
+    --ok: #1a8f4c; --warn: #b7791f; --bad: #c53030; --none: #cbd2dc;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #11161d; --card: #1a212b; --fg: #e6ebf2; --muted: #93a0b3; --line: #2a3340;
+      --ok: #3fb96f; --warn: #e0a83a; --bad: #ef6b6b; --none: #3a4452;
+    }
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg); color: var(--fg);
+    font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+    padding: 32px 16px 48px;
+  }
+  main { max-width: 760px; margin: 0 auto; }
+  h1 { font-size: 1.1rem; font-weight: 600; color: var(--muted); }
+  .hero {
+    margin-top: 12px; padding: 24px; border-radius: 12px;
+    background: var(--card); border: 1px solid var(--line);
+    display: flex; align-items: center; gap: 16px;
+  }
+  .dot { width: 20px; height: 20px; border-radius: 50%; background: var(--none); flex: none; }
+  .hero[data-status="operational"] .dot { background: var(--ok); }
+  .hero[data-status="degraded"] .dot { background: var(--warn); }
+  .hero[data-status="down"] .dot { background: var(--bad); }
+  .hero strong { font-size: 1.4rem; display: block; }
+  .hero span { color: var(--muted); font-size: .9rem; }
+  h2 { font-size: .8rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 28px 0 8px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; }
+  .probe { padding: 14px 16px; border-top: 1px solid var(--line); }
+  .probe:first-child { border-top: 0; }
+  .row { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  .name { font-weight: 600; }
+  .tag { font-size: .75rem; color: var(--muted); margin-left: 6px; font-weight: 400; }
+  .state { font-size: .9rem; }
+  .state.ok { color: var(--ok); } .state.fail { color: var(--bad); } .state.wait { color: var(--muted); }
+  .detail { font-size: .85rem; color: var(--muted); overflow-wrap: anywhere; margin-top: 2px; }
+  .bars { display: flex; gap: 2px; height: 18px; margin-top: 8px; align-items: stretch; }
+  .bars i { flex: 1; min-width: 2px; border-radius: 2px; background: var(--none); }
+  .bars i.ok { background: var(--ok); } .bars i.fail { background: var(--bad); }
+  dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; padding: 14px 16px; font-size: .9rem; }
+  dt { color: var(--muted); }
+  dd { overflow-wrap: anywhere; }
+  .note { margin-top: 20px; font-size: .85rem; color: var(--muted); }
+  .stale { display: none; margin-top: 12px; padding: 10px 14px; border-radius: 8px; border: 1px solid var(--bad); color: var(--bad); font-size: .9rem; }
+  body.stale-on .stale { display: block; }
+</style>
+</head>
+<body>
+<main>
+  <h1>status.ronggur.my.id</h1>
+  <section class="hero" id="hero" data-status="unknown" aria-live="polite">
+    <div class="dot"></div>
+    <div><strong id="headline">Memuat…</strong><span id="sub"></span></div>
+  </section>
+  <p class="stale" id="stale">Tidak bisa mengambil /api/status. Data di bawah mungkin sudah basi.</p>
+
+  <h2>Pemeriksaan</h2>
+  <div class="card" id="probes"></div>
+
+  <h2>Instance yang melayani Anda</h2>
+  <div class="card"><dl id="instance"></dl></div>
+
+  <p class="note" id="note"></p>
+</main>
+<script>
+(() => {
+  'use strict';
+  const LABEL = {
+    operational: 'Semua sistem berjalan',
+    degraded: 'Sebagian pemeriksaan gagal',
+    down: 'Layanan bermasalah',
+  };
+  const PROBE_TITLE = {
+    self: 'Layanan ini (self)', dns: 'DNS', http: 'HTTP situs utama',
+    tls: 'Sertifikat TLS', outbound: 'Koneksi keluar',
+  };
+  const $ = id => document.getElementById(id);
+
+  function el(tag, cls, text) {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text !== undefined) e.textContent = text;   // selalu textContent, bukan HTML
+    return e;
+  }
+
+  function dur(s) {
+    const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60);
+    if (d) return d + ' hari ' + h + ' jam';
+    if (h) return h + ' jam ' + m + ' menit';
+    return m + ' menit ' + (s % 60) + ' detik';
+  }
+
+  function renderProbe(p) {
+    const box = el('div', 'probe');
+    const row = el('div', 'row');
+    const name = el('span', 'name', PROBE_TITLE[p.name] || p.name);
+    if (!p.critical) name.append(el('span', 'tag', 'bergantung pada luar'));
+    const l = p.latest;
+    const st = el('span', 'state ' + (l ? (l.ok ? 'ok' : 'fail') : 'wait'),
+      l ? (l.ok ? 'OK · ' : 'Gagal · ') + l.latency_ms + ' ms' : 'menunggu');
+    row.append(name, st);
+    box.append(row, el('div', 'detail', p.target));
+    if (l) box.append(el('div', 'detail', l.detail));
+    const bars = el('div', 'bars');
+    const pad = Math.max(0, 60 - p.history.length);
+    for (let i = 0; i < pad; i++) bars.append(el('i'));
+    p.history.slice(-60).forEach(s => {
+      const b = el('i', s.ok ? 'ok' : 'fail');
+      b.title = new Date(s.time).toLocaleTimeString() + ' · ' + s.detail;
+      bars.append(b);
+    });
+    box.append(bars);
+    return box;
+  }
+
+  function renderInstance(i) {
+    const dl = $('instance');
+    dl.replaceChildren();
+    const rows = [
+      ['Nama instance', i.hostname || '—'],
+      ['Region', i.region + ' (sumber: ' + i.region_source + ')'],
+      ['Alamat', (i.addresses || []).join(', ') || '—'],
+    ];
+    Object.entries(i.edge_headers || {}).forEach(([k, v]) => rows.push([k, v]));
+    rows.forEach(([k, v]) => { dl.append(el('dt', '', k), el('dd', '', v)); });
+  }
+
+  async function tick() {
+    try {
+      const r = await fetch('/api/status', { cache: 'no-store' });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const d = await r.json();
+      document.body.classList.remove('stale-on');
+      $('hero').dataset.status = d.status;
+      $('headline').textContent = LABEL[d.status] || d.status;
+      $('sub').textContent = 'Instance aktif ' + dur(d.uptime_seconds) + ' · ' + d.requests + ' request · versi ' + d.version;
+      $('probes').replaceChildren(...d.probes.map(renderProbe));
+      renderInstance(d.instance);
+      $('note').textContent = 'Riwayat hanya di memori instance ini dan hilang saat restart. '
+        + 'Instance lain bisa menampilkan angka berbeda. Pemeriksaan tiap ' + d.probe_interval_seconds + ' detik.';
+    } catch (e) {
+      document.body.classList.add('stale-on');
+    }
+  }
+
+  tick();
+  setInterval(tick, 10000);
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,11 @@
+# Custom domain untuk HTTPProxy status-ronggur-my-id (dibuat oleh
+# `datumctl compute deploy`). Server-side apply dengan field manager sendiri,
+# sama seperti httpproxy-hostnames.yaml. Apply ulang setelah destroy/redeploy.
+apiVersion: networking.datumapis.com/v1alpha
+kind: HTTPProxy
+metadata:
+  name: status-ronggur-my-id
+  namespace: default
+spec:
+  hostnames:
+  - status.ronggur.my.id
