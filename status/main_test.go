@@ -5,8 +5,13 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -27,11 +32,11 @@ func TestOverall(t *testing.T) {
 		probes []ProbeStatus
 		want   string
 	}{
-		{"semua ok", []ProbeStatus{ps("self", true, &yes), ps("http", false, &yes)}, "operational"},
-		{"belum jalan", []ProbeStatus{ps("self", true, nil), ps("http", false, nil)}, "operational"},
-		{"probe luar gagal", []ProbeStatus{ps("self", true, &yes), ps("outbound", false, &no)}, "degraded"},
-		{"self gagal", []ProbeStatus{ps("self", true, &no), ps("http", false, &yes)}, "down"},
-		{"self gagal menang atas degraded", []ProbeStatus{ps("outbound", false, &no), ps("self", true, &no)}, "down"},
+		{"all ok", []ProbeStatus{ps("self", true, &yes), ps("http", false, &yes)}, "operational"},
+		{"not run yet", []ProbeStatus{ps("self", true, nil), ps("http", false, nil)}, "operational"},
+		{"outside probe fails", []ProbeStatus{ps("self", true, &yes), ps("outbound", false, &no)}, "degraded"},
+		{"self fails", []ProbeStatus{ps("self", true, &no), ps("http", false, &yes)}, "down"},
+		{"self failure beats degraded", []ProbeStatus{ps("outbound", false, &no), ps("self", true, &no)}, "down"},
 	}
 	for _, c := range cases {
 		if got := Overall(c.probes); got != c.want {
@@ -47,17 +52,17 @@ func TestStoreBoundedAndOrdered(t *testing.T) {
 	}
 	snap := s.Snapshot()
 	if snap[0].Name != "b" || snap[1].Name != "a" {
-		t.Fatalf("urutan probe berubah: %v, %v", snap[0].Name, snap[1].Name)
+		t.Fatalf("probe order changed: %v, %v", snap[0].Name, snap[1].Name)
 	}
 	if snap[0].Latest != nil {
-		t.Error("probe tanpa sampel harus Latest=nil")
+		t.Error("probe without samples must have Latest=nil")
 	}
 	a := snap[1]
 	if len(a.History) != historySize {
 		t.Fatalf("history %d, want %d", len(a.History), historySize)
 	}
 	if a.Latest.LatencyMs != int64(historySize+29) || a.History[0].LatencyMs != 30 {
-		t.Errorf("yang dibuang harus sampel tertua: first=%d last=%d", a.History[0].LatencyMs, a.Latest.LatencyMs)
+		t.Errorf("the oldest samples must be dropped: first=%d last=%d", a.History[0].LatencyMs, a.Latest.LatencyMs)
 	}
 }
 
@@ -75,17 +80,17 @@ func TestHTTPProbe(t *testing.T) {
 		return runProbe(context.Background(), Probe{run: httpProbe(client, srv.URL+path)}, timeout)
 	}
 	if s := run("/ok", time.Second); !s.OK {
-		t.Errorf("/ok harus OK: %+v", s)
+		t.Errorf("/ok must be OK: %+v", s)
 	}
 	if s := run("/bad", time.Second); s.OK || !strings.Contains(s.Detail, "503") {
-		t.Errorf("/bad harus gagal dengan 503: %+v", s)
+		t.Errorf("/bad must fail with 503: %+v", s)
 	}
-	// Redirect bukan sukses: probe tidak boleh mengikutinya diam-diam.
+	// A redirect is not success: the probe must not follow it silently.
 	if s := run("/redir", time.Second); s.OK {
-		t.Errorf("/redir harus dianggap gagal: %+v", s)
+		t.Errorf("/redir must count as a failure: %+v", s)
 	}
 	if s := run("/slow", 50*time.Millisecond); s.OK {
-		t.Errorf("/slow harus timeout: %+v", s)
+		t.Errorf("/slow must time out: %+v", s)
 	}
 }
 
@@ -97,13 +102,13 @@ func TestTLSProbe(t *testing.T) {
 	pool := x509.NewCertPool()
 	pool.AddCert(srv.Certificate())
 	ok := runProbe(context.Background(), Probe{run: tlsProbe(addr, &tls.Config{RootCAs: pool, ServerName: "example.com"})}, 2*time.Second)
-	if !ok.OK || !strings.Contains(ok.Detail, "hari") {
-		t.Errorf("sertifikat tepercaya harus OK dan melaporkan sisa hari: %+v", ok)
+	if !ok.OK || !strings.Contains(ok.Detail, "days") {
+		t.Errorf("a trusted certificate must be OK and report the days left: %+v", ok)
 	}
-	// Tanpa pool, sertifikat uji tidak dipercaya: harus gagal, bukan lolos.
+	// Without the pool the test certificate is untrusted: it must fail, not pass.
 	bad := runProbe(context.Background(), Probe{run: tlsProbe(addr, &tls.Config{})}, 2*time.Second)
 	if bad.OK {
-		t.Errorf("sertifikat tak dipercaya harus gagal: %+v", bad)
+		t.Errorf("an untrusted certificate must fail: %+v", bad)
 	}
 }
 
@@ -111,11 +116,11 @@ func TestTCPProbe(t *testing.T) {
 	srv := httptest.NewServer(http.NotFoundHandler())
 	addr := strings.TrimPrefix(srv.URL, "http://")
 	if s := runProbe(context.Background(), Probe{run: tcpProbe(addr)}, time.Second); !s.OK {
-		t.Errorf("port terbuka harus OK: %+v", s)
+		t.Errorf("an open port must be OK: %+v", s)
 	}
 	srv.Close()
 	if s := runProbe(context.Background(), Probe{run: tcpProbe(addr)}, time.Second); s.OK {
-		t.Errorf("port tertutup harus gagal: %+v", s)
+		t.Errorf("a closed port must fail: %+v", s)
 	}
 }
 
@@ -131,7 +136,7 @@ func TestStatusEndpoint(t *testing.T) {
 	h := newTestApp().routes()
 	req := httptest.NewRequest("GET", "/api/status", nil)
 	req.Header.Set("X-Forwarded-For", "203.0.113.9")
-	req.Header.Set("Authorization", "rahasia") // tidak boleh ikut keluar
+	req.Header.Set("Authorization", "secret") // must not leak out
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 
@@ -140,19 +145,19 @@ func TestStatusEndpoint(t *testing.T) {
 	}
 	var got statusResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
-		t.Fatalf("JSON tidak valid: %v", err)
+		t.Fatalf("invalid JSON: %v", err)
 	}
 	if got.Status != "degraded" {
 		t.Errorf("status %q, want degraded", got.Status)
 	}
 	if got.UptimeSeconds < 90 || got.Persistent {
-		t.Errorf("uptime/persistent salah: %+v", got)
+		t.Errorf("wrong uptime/persistent: %+v", got)
 	}
 	if got.Instance.EdgeHeaders["X-Forwarded-For"] != "203.0.113.9" {
-		t.Errorf("header edge hilang: %v", got.Instance.EdgeHeaders)
+		t.Errorf("edge header missing: %v", got.Instance.EdgeHeaders)
 	}
-	if strings.Contains(rec.Body.String(), "rahasia") {
-		t.Error("header di luar allowlist bocor ke respons")
+	if strings.Contains(rec.Body.String(), "secret") {
+		t.Error("header outside the allowlist leaked into the response")
 	}
 }
 
@@ -161,12 +166,12 @@ func TestIndexAndNotFound(t *testing.T) {
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest("GET", "/", nil))
 	if rec.Code != 200 || !strings.Contains(rec.Body.String(), "status.ronggur.my.id") {
-		t.Errorf("/ salah: %d", rec.Code)
+		t.Errorf("wrong response for /: %d", rec.Code)
 	}
 	rec = httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest("GET", "/tidak-ada", nil))
+	h.ServeHTTP(rec, httptest.NewRequest("GET", "/not-found", nil))
 	if rec.Code != 404 {
-		t.Errorf("/tidak-ada: %d, want 404", rec.Code)
+		t.Errorf("/not-found: %d, want 404", rec.Code)
 	}
 	rec = httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest("POST", "/", nil))
@@ -185,7 +190,7 @@ func TestForceHTTPSAndHealthz(t *testing.T) {
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != 301 || rec.Header().Get("Location") != "https://status.ronggur.my.id/?a=1" {
-		t.Errorf("redirect salah: %d %s", rec.Code, rec.Header().Get("Location"))
+		t.Errorf("wrong redirect: %d %s", rec.Code, rec.Header().Get("Location"))
 	}
 
 	req = httptest.NewRequest("GET", "/", nil)
@@ -193,7 +198,7 @@ func TestForceHTTPSAndHealthz(t *testing.T) {
 	rec = httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Header().Get("Strict-Transport-Security") == "" {
-		t.Error("HSTS hilang di HTTPS")
+		t.Error("HSTS missing on HTTPS")
 	}
 
 	before := a.requests.Load()
@@ -202,31 +207,31 @@ func TestForceHTTPSAndHealthz(t *testing.T) {
 	rec = httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != 200 || strings.TrimSpace(rec.Body.String()) != "ok" {
-		t.Errorf("/healthz tidak boleh di-redirect: %d", rec.Code)
+		t.Errorf("/healthz must not be redirected: %d", rec.Code)
 	}
 	if a.requests.Load() != before {
-		t.Error("/healthz tidak boleh dihitung sebagai request")
+		t.Error("/healthz must not count as a request")
 	}
 }
 
 func TestDeriveRegion(t *testing.T) {
 	t.Setenv("REGION", "")
 	if r, src := deriveRegion("wd-abc-us-east-1-0"); r != "us-east-1" || src != "hostname" {
-		t.Errorf("dari hostname: %s %s", r, src)
+		t.Errorf("from hostname: %s %s", r, src)
 	}
-	if r, _ := deriveRegion("instance-0"); r != "tidak diketahui" {
-		t.Errorf("tanpa petunjuk: %s", r)
+	if r, _ := deriveRegion("instance-0"); r != "unknown" {
+		t.Errorf("no hint: %s", r)
 	}
 	t.Setenv("REGION", "us-central-1")
 	if r, src := deriveRegion("wd-abc-us-east-1-0"); r != "us-central-1" || src != "env REGION" {
-		t.Errorf("env harus menang: %s %s", r, src)
+		t.Errorf("env must win: %s %s", r, src)
 	}
 }
 
 func TestEnvDuration(t *testing.T) {
 	t.Setenv("D", "45")
 	if got := envDuration("D", time.Second); got != 45*time.Second {
-		t.Errorf("angka polos = detik: %s", got)
+		t.Errorf("bare number = seconds: %s", got)
 	}
 	t.Setenv("D", "2m")
 	if got := envDuration("D", time.Second); got != 2*time.Minute {
@@ -234,6 +239,133 @@ func TestEnvDuration(t *testing.T) {
 	}
 	t.Setenv("D", "-5")
 	if got := envDuration("D", 7*time.Second); got != 7*time.Second {
-		t.Errorf("negatif harus fallback: %s", got)
+		t.Errorf("negative must fall back: %s", got)
+	}
+}
+
+func TestSelfProbeRunsInProcess(t *testing.T) {
+	detail, err := selfProbe(http.HandlerFunc(healthzHandler))(context.Background())
+	if err != nil || detail != "HTTP 200" {
+		t.Fatalf("healthy handler: detail=%q err=%v", detail, err)
+	}
+	broken := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.Error(w, "boom", http.StatusInternalServerError) })
+	if _, err := selfProbe(broken)(context.Background()); err == nil || !strings.Contains(err.Error(), "HTTP 500") {
+		t.Fatalf("broken handler: err=%v, want HTTP 500", err)
+	}
+}
+
+func TestHasNameserver(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, body string) string {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	cases := []struct {
+		name string
+		path string
+		want bool
+	}{
+		{"valid", write("valid", "# comment\nnameserver 2001:4860:4860::6464\n"), true},
+		{"comments only", write("comments", "# nameserver 1.1.1.1\nsearch example.com\n"), false},
+		{"empty", write("empty", ""), false},
+		{"missing", filepath.Join(dir, "missing"), false},
+	}
+	for _, c := range cases {
+		if got := hasNameserver(c.path); got != c.want {
+			t.Errorf("%s: hasNameserver = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+func TestResolverKeepsSystemWhenConfigured(t *testing.T) {
+	if newResolver(true, "[::1]:53") != net.DefaultResolver {
+		t.Fatal("a configured system resolver must be left alone")
+	}
+}
+
+func TestFallbackResolverQueriesFallbackServer(t *testing.T) {
+	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pc.Close()
+	got := make(chan int, 1)
+	go func() {
+		buf := make([]byte, 512)
+		if n, _, err := pc.ReadFrom(buf); err == nil {
+			got <- n
+		}
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	_, _ = newResolver(false, pc.LocalAddr().String()).LookupHost(ctx, "status-test.invalid")
+	select {
+	case n := <-got:
+		if n == 0 {
+			t.Fatal("empty DNS query")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("the fallback server never received a query")
+	}
+}
+
+func TestWaitForRoute(t *testing.T) {
+	calls := 0
+	flaky := func() error {
+		calls++
+		if calls < 3 {
+			return errors.New("network is unreachable")
+		}
+		return nil
+	}
+	if !waitForRoute(context.Background(), flaky, time.Millisecond, 10) || calls != 3 {
+		t.Fatalf("flaky route: calls=%d, want ready on the 3rd call", calls)
+	}
+	never := func() error { return errors.New("network is unreachable") }
+	if waitForRoute(context.Background(), never, time.Millisecond, 3) {
+		t.Fatal("a route that never comes up must report false, not hang or lie")
+	}
+}
+
+func TestRouteAvailable(t *testing.T) {
+	if err := routeAvailable("127.0.0.1:53"); err != nil {
+		t.Fatalf("loopback must be routable in the test environment: %v", err)
+	}
+}
+
+func TestOutboundDefaultIsIPv6(t *testing.T) {
+	t.Setenv("PROBE_OUTBOUND_ADDR", "")
+	host, _, err := net.SplitHostPort(loadConfig().outboundAddr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a, err := netip.ParseAddr(host); err != nil || !a.Is6() {
+		t.Fatalf("default outbound target %q must be an IPv6 literal: the platform has no IPv4 egress", host)
+	}
+}
+
+func TestGoogleProbe(t *testing.T) {
+	t.Setenv("PROBE_GOOGLE_URL", "")
+	cfg := loadConfig()
+	if cfg.googleURL != "https://www.google.com/generate_204" {
+		t.Fatalf("default google URL = %q", cfg.googleURL)
+	}
+	var found *Probe
+	for _, p := range buildProbes(cfg) {
+		if p.Name == "google" {
+			found = &p
+		}
+	}
+	if found == nil {
+		t.Fatal("buildProbes has no google probe")
+	}
+	if found.Critical {
+		t.Fatal("google is an outside dependency: it must not make the page report down")
+	}
+	if found.Target != cfg.googleURL {
+		t.Fatalf("target = %q, want %q", found.Target, cfg.googleURL)
 	}
 }

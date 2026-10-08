@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="id">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -60,14 +60,14 @@
   <h1>status.ronggur.my.id</h1>
   <section class="hero" id="hero" data-status="unknown" aria-live="polite">
     <div class="dot"></div>
-    <div><strong id="headline">Memuat…</strong><span id="sub"></span></div>
+    <div><strong id="headline">Loading…</strong><span id="sub"></span></div>
   </section>
-  <p class="stale" id="stale">Tidak bisa mengambil /api/status. Data di bawah mungkin sudah basi.</p>
+  <p class="stale" id="stale">Could not fetch /api/status. The data below may be stale.</p>
 
-  <h2>Pemeriksaan</h2>
+  <h2>Checks</h2>
   <div class="card" id="probes"></div>
 
-  <h2>Instance yang melayani Anda</h2>
+  <h2>Instance serving you</h2>
   <div class="card"><dl id="instance"></dl></div>
 
   <p class="note" id="note"></p>
@@ -76,38 +76,38 @@
 (() => {
   'use strict';
   const LABEL = {
-    operational: 'Semua sistem berjalan',
-    degraded: 'Sebagian pemeriksaan gagal',
-    down: 'Layanan bermasalah',
+    operational: 'All systems operational',
+    degraded: 'Some checks are failing',
+    down: 'Service is down',
   };
   const PROBE_TITLE = {
-    self: 'Layanan ini (self)', dns: 'DNS', http: 'HTTP situs utama',
-    tls: 'Sertifikat TLS', outbound: 'Koneksi keluar',
+    self: 'This service (self)', dns: 'DNS', http: 'Main site HTTP',
+    tls: 'TLS certificate', google: 'Google HTTPS', outbound: 'Outbound connection',
   };
   const $ = id => document.getElementById(id);
 
   function el(tag, cls, text) {
     const e = document.createElement(tag);
     if (cls) e.className = cls;
-    if (text !== undefined) e.textContent = text;   // selalu textContent, bukan HTML
+    if (text !== undefined) e.textContent = text;   // always textContent, never HTML
     return e;
   }
 
   function dur(s) {
     const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60);
-    if (d) return d + ' hari ' + h + ' jam';
-    if (h) return h + ' jam ' + m + ' menit';
-    return m + ' menit ' + (s % 60) + ' detik';
+    if (d) return d + 'd ' + h + 'h';
+    if (h) return h + 'h ' + m + 'm';
+    return m + 'm ' + (s % 60) + 's';
   }
 
   function renderProbe(p) {
     const box = el('div', 'probe');
     const row = el('div', 'row');
     const name = el('span', 'name', PROBE_TITLE[p.name] || p.name);
-    if (!p.critical) name.append(el('span', 'tag', 'bergantung pada luar'));
+    if (!p.critical) name.append(el('span', 'tag', 'depends on the outside'));
     const l = p.latest;
     const st = el('span', 'state ' + (l ? (l.ok ? 'ok' : 'fail') : 'wait'),
-      l ? (l.ok ? 'OK · ' : 'Gagal · ') + l.latency_ms + ' ms' : 'menunggu');
+      l ? (l.ok ? 'OK · ' : 'Failed · ') + l.latency_ms + ' ms' : 'waiting');
     row.append(name, st);
     box.append(row, el('div', 'detail', p.target));
     if (l) box.append(el('div', 'detail', l.detail));
@@ -127,9 +127,9 @@
     const dl = $('instance');
     dl.replaceChildren();
     const rows = [
-      ['Nama instance', i.hostname || '—'],
-      ['Region', i.region + ' (sumber: ' + i.region_source + ')'],
-      ['Alamat', (i.addresses || []).join(', ') || '—'],
+      ['Instance name', i.hostname || '—'],
+      ['Region', i.region + ' (source: ' + i.region_source + ')'],
+      ['Address', (i.addresses || []).join(', ') || '—'],
     ];
     Object.entries(i.edge_headers || {}).forEach(([k, v]) => rows.push([k, v]));
     rows.forEach(([k, v]) => { dl.append(el('dt', '', k), el('dd', '', v)); });
@@ -143,11 +143,11 @@
       document.body.classList.remove('stale-on');
       $('hero').dataset.status = d.status;
       $('headline').textContent = LABEL[d.status] || d.status;
-      $('sub').textContent = 'Instance aktif ' + dur(d.uptime_seconds) + ' · ' + d.requests + ' request · versi ' + d.version;
+      $('sub').textContent = 'Instance up ' + dur(d.uptime_seconds) + ' · ' + d.requests + ' requests · version ' + d.version;
       $('probes').replaceChildren(...d.probes.map(renderProbe));
       renderInstance(d.instance);
-      $('note').textContent = 'Riwayat hanya di memori instance ini dan hilang saat restart. '
-        + 'Instance lain bisa menampilkan angka berbeda. Pemeriksaan tiap ' + d.probe_interval_seconds + ' detik.';
+      $('note').textContent = 'History is kept in this instance\'s memory only and is lost on restart. '
+        + 'Other instances may show different numbers. Checks run every ' + d.probe_interval_seconds + ' seconds.';
     } catch (e) {
       document.body.classList.add('stale-on');
     }

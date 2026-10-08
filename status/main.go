@@ -162,7 +162,7 @@ func dnsProbe(hosts []string) func(context.Context) (string, error) {
 			if err != nil {
 				return "", fmt.Errorf("%s: %w", h, err)
 			}
-			parts = append(parts, fmt.Sprintf("%s=%d alamat", h, len(addrs)))
+			parts = append(parts, fmt.Sprintf("%s=%d addresses", h, len(addrs)))
 		}
 		return strings.Join(parts, ", "), nil
 	}
@@ -178,13 +178,13 @@ func tlsProbe(addr string, cfg *tls.Config) func(context.Context) (string, error
 		defer conn.Close()
 		certs := conn.(*tls.Conn).ConnectionState().PeerCertificates
 		if len(certs) == 0 {
-			return "", errors.New("tidak ada sertifikat")
+			return "", errors.New("no certificate")
 		}
 		left := time.Until(certs[0].NotAfter)
 		if left <= 0 {
-			return "", fmt.Errorf("sertifikat kedaluwarsa %s", certs[0].NotAfter.Format("2006-01-02"))
+			return "", fmt.Errorf("certificate expired %s", certs[0].NotAfter.Format("2006-01-02"))
 		}
-		return fmt.Sprintf("berlaku sampai %s (%d hari)", certs[0].NotAfter.Format("2006-01-02"), int(left.Hours()/24)), nil
+		return fmt.Sprintf("valid until %s (%d days)", certs[0].NotAfter.Format("2006-01-02"), int(left.Hours()/24)), nil
 	}
 }
 
@@ -197,16 +197,122 @@ func tcpProbe(addr string) func(context.Context) (string, error) {
 			return "", err
 		}
 		conn.Close()
-		return "terhubung", nil
+		return "connected", nil
 	}
 }
 
-func buildProbes(port string, cfg config) []Probe {
+// discard is a ResponseWriter that keeps only the status code, so the self
+// probe can call a handler without a socket.
+type discard struct {
+	h    http.Header
+	code int
+}
+
+func (d *discard) Header() http.Header         { return d.h }
+func (d *discard) Write(b []byte) (int, error) { return len(b), nil }
+func (d *discard) WriteHeader(code int) {
+	if d.code == 0 {
+		d.code = code
+	}
+}
+
+// selfProbe calls the handler in process instead of dialing 127.0.0.1: the
+// unikernel runtime has no loopback interface, and a probe that needs one would
+// report a healthy server as down.
+func selfProbe(h http.Handler) func(context.Context) (string, error) {
+	return func(ctx context.Context) (string, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, "/healthz", nil)
+		if err != nil {
+			return "", err
+		}
+		w := &discard{h: http.Header{}}
+		h.ServeHTTP(w, req)
+		if w.code == 0 {
+			w.code = http.StatusOK
+		}
+		if w.code < 200 || w.code > 299 {
+			return "", fmt.Errorf("HTTP %d", w.code)
+		}
+		return fmt.Sprintf("HTTP %d", w.code), nil
+	}
+}
+
+func healthzHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	fmt.Fprintln(w, "ok")
+}
+
+// hasNameserver reports whether a resolv.conf names at least one server. The
+// unikernel image has no resolv.conf, and Go then falls back to [::1]:53.
+func hasNameserver(path string) bool {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		f := strings.Fields(line)
+		if len(f) >= 2 && f[0] == "nameserver" {
+			return true
+		}
+	}
+	return false
+}
+
+// newResolver keeps the system resolver when one is configured; otherwise it
+// sends every query to fallback, an IPv6 server because the platform has no
+// IPv4 egress.
+func newResolver(systemConfigured bool, fallback string) *net.Resolver {
+	if systemConfigured {
+		return net.DefaultResolver
+	}
+	return &net.Resolver{
+		PreferGo: true,
+		Dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
+			var d net.Dialer
+			return d.DialContext(ctx, network, fallback)
+		},
+	}
+}
+
+// routeAvailable fails with "network is unreachable" until the instance has a
+// route to addr. A UDP dial sends nothing; it only asks the kernel for a route.
+func routeAvailable(addr string) error {
+	conn, err := net.Dial("udp", addr)
+	if err != nil {
+		return err
+	}
+	return conn.Close()
+}
+
+// waitForRoute polls ready until it succeeds or attempts run out. The unikernel
+// starts the process before eth0 is configured, so an immediate first probe
+// round records failures that are only a boot race. It returns false rather
+// than blocking forever: a network that never comes up must still be reported.
+func waitForRoute(ctx context.Context, ready func() error, interval time.Duration, attempts int) bool {
+	for i := 0; i < attempts; i++ {
+		if ready() == nil {
+			return true
+		}
+		if i == attempts-1 {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(interval):
+		}
+	}
+	return false
+}
+
+func buildProbes(cfg config) []Probe {
 	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	return []Probe{
-		{Name: "self", Critical: true, Target: "127.0.0.1:" + port + "/healthz", run: httpProbe(client, "http://127.0.0.1:"+port+"/healthz")},
+		{Name: "self", Critical: true, Target: "in-process /healthz", run: selfProbe(http.HandlerFunc(healthzHandler))},
 		{Name: "dns", Target: strings.Join(cfg.dnsHosts, ", "), run: dnsProbe(cfg.dnsHosts)},
 		{Name: "http", Target: cfg.httpURL, run: httpProbe(client, cfg.httpURL)},
+		{Name: "google", Target: cfg.googleURL, run: httpProbe(client, cfg.googleURL)},
 		{Name: "tls", Target: cfg.tlsAddr, run: tlsProbe(cfg.tlsAddr, &tls.Config{MinVersion: tls.VersionTLS12})},
 		{Name: "outbound", Target: cfg.outboundAddr, run: tcpProbe(cfg.outboundAddr)},
 	}
@@ -215,8 +321,10 @@ func buildProbes(port string, cfg config) []Probe {
 type config struct {
 	dnsHosts     []string
 	httpURL      string
+	googleURL    string
 	tlsAddr      string
 	outboundAddr string
+	dnsFallback  string
 	interval     time.Duration
 	probeTimeout time.Duration
 }
@@ -225,8 +333,10 @@ func loadConfig() config {
 	return config{
 		dnsHosts:     splitList(env("PROBE_DNS_HOSTS", "ronggur.my.id,status.ronggur.my.id")),
 		httpURL:      env("PROBE_HTTP_URL", "https://ronggur.my.id/healthz"),
+		googleURL:    env("PROBE_GOOGLE_URL", "https://www.google.com/generate_204"),
 		tlsAddr:      env("PROBE_TLS_ADDR", "ronggur.my.id:443"),
-		outboundAddr: env("PROBE_OUTBOUND_ADDR", "1.1.1.1:443"),
+		outboundAddr: env("PROBE_OUTBOUND_ADDR", "[2606:4700:4700::1111]:443"),
+		dnsFallback:  env("DNS_FALLBACK", "[2001:4860:4860::6464]:53"),
 		interval:     envDuration("PROBE_INTERVAL", 30*time.Second),
 		probeTimeout: envDuration("PROBE_TIMEOUT", 5*time.Second),
 	}
@@ -236,7 +346,7 @@ var regionRe = regexp.MustCompile(`[a-z]{2}-[a-z]+-\d+`)
 
 // deriveRegion is a best effort: placements share one template, so env cannot
 // differ per region. REGION wins when set; otherwise look for a region name in
-// the instance hostname. "tidak diketahui" is a legitimate, reported result.
+// the instance hostname. "unknown" is a legitimate, reported result.
 func deriveRegion(hostname string) (region, source string) {
 	if v := os.Getenv("REGION"); v != "" {
 		return v, "env REGION"
@@ -244,7 +354,7 @@ func deriveRegion(hostname string) (region, source string) {
 	if m := regionRe.FindString(hostname); m != "" {
 		return m, "hostname"
 	}
-	return "tidak diketahui", "tidak ada petunjuk di env atau hostname"
+	return "unknown", "no hint in env or hostname"
 }
 
 type Instance struct {
@@ -299,11 +409,7 @@ type app struct {
 
 func (a *app) routes() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		w.Header().Set("Cache-Control", "no-store")
-		fmt.Fprintln(w, "ok")
-	})
+	mux.HandleFunc("/healthz", healthzHandler)
 	mux.HandleFunc("/api/status", a.handleStatus)
 	mux.HandleFunc("/", a.handleIndex)
 	return a.count(forceHTTPS(readOnly(mux)))
@@ -311,7 +417,7 @@ func (a *app) routes() http.Handler {
 
 func (a *app) count(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// The self probe polls /healthz; counting it would drown real traffic.
+		// Platform health checks poll /healthz; counting them would drown real traffic.
 		if r.URL.Path != "/healthz" {
 			a.requests.Add(1)
 		}
@@ -389,6 +495,7 @@ func (a *app) probeLoop(ctx context.Context, probes []Probe, cfg config) {
 		}
 		wg.Wait()
 	}
+	waitForRoute(ctx, func() error { return routeAvailable(cfg.dnsFallback) }, time.Second, 15)
 	round()
 	t := time.NewTicker(cfg.interval)
 	defer t.Stop()
@@ -405,7 +512,8 @@ func (a *app) probeLoop(ctx context.Context, probes []Probe, cfg config) {
 func main() {
 	port := env("PORT", "8080")
 	cfg := loadConfig()
-	probes := buildProbes(port, cfg)
+	net.DefaultResolver = newResolver(hasNameserver("/etc/resolv.conf"), cfg.dnsFallback)
+	probes := buildProbes(cfg)
 	a := &app{store: NewStore(probes), started: time.Now(), interval: cfg.interval}
 
 	srv := &http.Server{
@@ -444,7 +552,7 @@ func envDuration(key string, fallback time.Duration) time.Duration {
 	if n, err := strconv.Atoi(v); err == nil && n > 0 {
 		return time.Duration(n) * time.Second
 	}
-	log.Printf("%s=%q tidak valid, pakai %s", key, v, fallback)
+	log.Printf("%s=%q is invalid, using %s", key, v, fallback)
 	return fallback
 }
 
