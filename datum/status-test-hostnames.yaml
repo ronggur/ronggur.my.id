@@ -1,0 +1,21 @@
+# Custom domain untuk dua workload uji status page: general-purpose vs
+# unikernel (HTTPProxy dibuat oleh `datumctl compute deploy`). Server-side apply
+# dengan field manager sendiri, sama seperti status-hostnames.yaml. Hapus
+# setelah `datumctl compute destroy status-test-gp status-test-uk`.
+apiVersion: networking.datumapis.com/v1alpha
+kind: HTTPProxy
+metadata:
+  name: status-test-gp
+  namespace: default
+spec:
+  hostnames:
+  - status-gp.ronggur.my.id
+---
+apiVersion: networking.datumapis.com/v1alpha
+kind: HTTPProxy
+metadata:
+  name: status-test-uk
+  namespace: default
+spec:
+  hostnames:
+  - status-uk.ronggur.my.id
