@@ -5,6 +5,8 @@ situs utama: `status-ronggur-my-id`, project `personal-project-86e0525b`,
 network `ronggur-my-id` yang sama. Tidak ada resource situs utama yang
 disentuh. Semua langkah di bawah dijalankan manual.
 
+Hasil uji runtime unikernel vs general-purpose: `docs/status-unikernel-test.md`.
+
 ## Image
 
 Actions → **publish-status-image** (menjalankan `go vet` dan `go test` dulu):
@@ -100,7 +102,7 @@ sebelum langkah subdomain selesai itu wajar.
 | Pertanyaan | Dilihat dari |
 |---|---|
 | Apakah ada outbound internet? | probe `outbound`, `http`, `tls`, `dns` di page |
-| Apakah region instance bisa diketahui? | "Region" di kotak instance. Isinya "tidak diketahui" artinya hostname tidak memuat region |
+| Apakah region instance bisa diketahui? | "Region" di kotak instance. Isinya "unknown" artinya hostname tidak memuat region |
 | Dua region, satu hostname: ke mana trafik pergi? | muat ulang berkali-kali dan dari jaringan berbeda, bandingkan "Nama instance" dan "Alamat" |
 | Berapa downtime rollout? | `while true; do curl -s -o /dev/null -w '%{http_code}\n' https://status.ronggur.my.id/healthz; sleep 0.5; done` lalu `datumctl compute restart status-ronggur-my-id` |
 | Apakah `destroy` meninggalkan sisa? | setelah `destroy`, cek `datumctl get httpproxy` dan `datumctl get dnsrecordsets` |
